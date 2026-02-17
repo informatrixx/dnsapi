@@ -11,6 +11,7 @@
 
 	$aIP = isset($_GET["ip"]) ? $_GET["ip"] : $_SERVER["REMOTE_ADDR"];
 
+	$aDynCache = array();
 	$aResponse = array(
 		"IP" =>		$aIP,
 	);
@@ -33,6 +34,8 @@
 		//Einstellungen aus JSON Datei holen
 		define(constant_name: 'CONFIG', value: json_decode(json: file_get_contents(filename: CONFIG_FILE), associative: true));
 		$aDynCache = json_decode(json: file_get_contents(filename: CACHE_FILE), associative: true);
+		if(!is_array($aDynCache))
+			$aDynCache = array();
 
 
 		if(!isset(CONFIG['domains'][$aDomain]))
@@ -52,7 +55,7 @@
 					$aResponse['result'] = 'CACHE';
 			}
 			
-			if($aResponse['result'] != 'CACHE')
+			if(($aResponse['result'] ?? null) != 'CACHE')
 			{
 				interface DNSAPIv1 {
 					function __construct(string $zoneID, array $APIConfig);

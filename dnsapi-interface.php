@@ -55,7 +55,7 @@
 HELP;
 
 
-	if(!isset($aOptions['x']) && !isset($aoptions['domain']))
+	if(!isset($aOptions['x']) && !isset($aOptions['domain']))
 		die('	-x | --domain	... DNS Root Domain ist erfoderlich!' . PHP_EOL);
 
 	define(constant_name: 'DOMAIN', value: isset($aOptions['x']) ? $aOptions['x'] : $aOptions['domain']);
