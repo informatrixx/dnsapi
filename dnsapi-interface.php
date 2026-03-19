@@ -186,14 +186,19 @@ HELP;
 		else
 			echo 'Fehler: Falsche Parameter' . PHP_EOL;
 	}
-	if(isset($aOptions['p']) || isset($aOptions['print']))
-	{
-		$aSelector = !empty($aOptions['p']) ? $aOptions['p'] : null;
-		$aRecords = $aAPI->getRecords();
-		$aPrintRecords = array();
-		foreach($aRecords as $aRecord)
-			if(empty($aSelector) || $aRecord['type'] == $aSelector)
-				$aPrintRecords[] = $aRecord;
-		print_r($aPrintRecords);	
+		if(isset($aOptions['p']) || isset($aOptions['print']))
+		{
+			$aSelector = !empty($aOptions['p']) ? $aOptions['p'] : null;
+			$aRecords = $aAPI->getRecords();
+			if($aRecords === false)
+			{
+				fwrite(STDERR, 'Fehler: ' . $aAPI->lastError . PHP_EOL);
+				exit(1);
+			}
+			$aPrintRecords = array();
+			foreach($aRecords as $aRecord)
+				if(empty($aSelector) || $aRecord['type'] == $aSelector)
+					$aPrintRecords[] = $aRecord;
+			print_r($aPrintRecords);	
 	}
 ?>

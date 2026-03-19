@@ -1,96 +1,166 @@
 #!/usr/bin/php
 <?php
 
-	//Environment Variablen von Certbot aufgreifen:
-	define(constant_name: 'RENEWED_LINEAGE', value: getenv(name: 'RENEWED_LINEAGE'));
-	define(constant_name: 'RENEWED_DOMAINS', value: getenv(name: 'RENEWED_DOMAINS'));
-
 	const CONFIG_FILE = '/etc/dnsapi/config.json';
 	const DNSAPI_SOURCE_DIR = '/var/lib/dnsapi';
 
-	define(constant_name: 'CONFIG', value: json_decode(json: file_get_contents(filename: CONFIG_FILE), associative: true));
+	function fail(string $message, int $exitCode = 1): never
+	{
+		fwrite(STDERR, $message . PHP_EOL);
+		exit($exitCode);
+	}
+
+	function envValue(string $name): string
+	{
+		$value = getenv($name);
+		return $value === false ? '' : $value;
+	}
+
+	function loadConfig(): array
+	{
+		$config = json_decode(json: (string) file_get_contents(filename: CONFIG_FILE), associative: true);
+		if(!is_array($config))
+			fail('DNSAPI Konfiguration konnte nicht geladen werden: ' . CONFIG_FILE);
+
+		return $config;
+	}
+
+	function loadAPI(array $config, string $identifier, array &$apis): array
+	{
+		$domainPart = strtolower(rtrim($identifier, '.'));
+		while($domainPart !== '')
+		{
+			if(isset($config['domains'][$domainPart]))
+			{
+				$zoneID = $config['domains'][$domainPart]['zoneID'] ?? null;
+				$apiName = $config['domains'][$domainPart]['API'] ?? null;
+				if(is_string($zoneID) && is_string($apiName) && isset($config['API'][$apiName]))
+				{
+					require_once(rtrim(characters: '/', string: DNSAPI_SOURCE_DIR) . "/dnsapi-$apiName.inc.php");
+					$apiClassName = $apiName . 'API';
+					if(class_exists($apiClassName))
+					{
+						if(!isset($apis[$zoneID]))
+							$apis[$zoneID] = new $apiClassName(zoneID: $zoneID, APIConfig: $config['API'][$apiName]);
+
+						return array(
+							'matchedDomain' => $domainPart,
+							'zoneID' => $zoneID,
+							'api' => $apis[$zoneID],
+						);
+					}
+				}
+			}
+
+			$nextDomainPart = preg_replace(pattern: '/^[^.]+\./', replacement: '', subject: $domainPart);
+			if(!is_string($nextDomainPart) || $nextDomainPart === $domainPart)
+				break;
+			$domainPart = $nextDomainPart;
+		}
+
+		return array();
+	}
+
+	function buildTLSAHash(string $lineage): string
+	{
+		$certificatePath = escapeshellarg($lineage . '/cert.pem');
+		$command = 'openssl x509 -in ' . $certificatePath . ' -noout -pubkey'
+			. ' | openssl pkey -pubin -outform DER'
+			. ' | openssl dgst -sha256 -binary'
+			. ' | hexdump -ve \'/1 "%02x"\'';
+		$hash = trim((string) shell_exec($command));
+		if($hash === '')
+			fail('TLSA Hash konnte nicht aus dem erneuerten Zertifikat erzeugt werden: ' . $lineage);
+
+		return $hash;
+	}
+
+	function splitDomains(string $domains): array
+	{
+		$parts = preg_split('/\s+/', trim($domains));
+		if($parts === false)
+			return array();
+
+		return array_values(array_filter($parts, fn($domain) => $domain !== ''));
+	}
 
 	interface DNSAPIv1 {
 		function __construct(string $zoneID, array $APIConfig);
 		function multiSetRecords(array $records);
 	}
 
+	$renewedLineage = envValue('RENEWED_LINEAGE');
+	$renewedDomains = envValue('RENEWED_DOMAINS');
+	if($renewedLineage === '')
+		fail('Certbot hat keinen RENEWED_LINEAGE fuer den TLSA Hook uebergeben.');
 
-	$aTLSARecords = array();
-	$aUpdateDomains = array();
-	$aAPIsArray = array();
+	$config = loadConfig();
+	if(!defined('CONFIG'))
+		define(constant_name: 'CONFIG', value: $config);
+	$tlsaRecords = array();
+	$apis = array();
+	$errors = array();
 
-	//TLSA Konfiguration einlesen
-	if(isset(CONFIG['tlsa-records'][RENEWED_LINEAGE]))
+	if(isset($config['tlsa-records'][$renewedLineage]) && is_array($config['tlsa-records'][$renewedLineage]))
 	{
-		$aTLSADomains = CONFIG['tlsa-records'][RENEWED_LINEAGE];
-		if(isset(CONFIG['tlsa-records'][RENEWED_LINEAGE]['%']))
+		$tlsaDomains = $config['tlsa-records'][$renewedLineage];
+		if(isset($tlsaDomains['%']))
 		{
-			$aRenewedDomains = explode(separator: ' ', string: RENEWED_DOMAINS);
-			foreach($aRenewedDomains as $aDomain)
-				$aTLSADomains[$aDomain] = CONFIG['tlsa-records'][RENEWED_LINEAGE]['%'];
-			unset($aTLSADomains['%']);
+			$renewedDomainList = splitDomains($renewedDomains);
+			foreach($renewedDomainList as $domain)
+				if(!isset($tlsaDomains[$domain]))
+					$tlsaDomains[$domain] = $tlsaDomains['%'];
+			unset($tlsaDomains['%']);
 		}
 
-		//Hash Wert generieren
-		$aHash = shell_exec('openssl x509 -in ' . RENEWED_LINEAGE . '/cert.pem -noout -pubkey | openssl pkey -pubin -outform DER | openssl dgst -sha256 -binary | hexdump -ve \'/1 "%02x"\'');
-		foreach($aTLSADomains as $aDomain => $aPortsArray)
+		$hash = buildTLSAHash($renewedLineage);
+		foreach($tlsaDomains as $domain => $portsArray)
 		{
-			//Domain Config holen und passende Klasse laden
-			$aDNSZoneID = null;
-			$aDomainPart = $aDomain;
-			while(str_contains(haystack: $aDomainPart, needle: '.'))
-				if(array_key_exists(key: $aDomainPart, array: CONFIG['domains']))
-				{
-					$aDNSZoneID = CONFIG['domains'][$aDomainPart]['zoneID'];
-					$aAPIName = CONFIG['domains'][$aDomainPart]['API'];
-					if(isset(CONFIG['API'][$aAPIName]))
-					{
-						require_once(rtrim(characters: '/', string: DNSAPI_SOURCE_DIR) . "/dnsapi-$aAPIName.inc.php");
-						$aAPIClassName = $aAPIName . 'API';
-						if(!isset($aAPIsArray[$aDNSZoneID]))
-							$aAPIsArray[$aDNSZoneID] = new $aAPIClassName(zoneID: $aDNSZoneID, APIConfig: CONFIG['API'][$aAPIName]);
-					}
-					break;
-				}
-				else
-					$aDomainPart = preg_replace(pattern: '/^[^.]+\./', replacement: '', subject: $aDomainPart);
-
-			//Keine passende Domain Zone gefunden -> continue
-			if($aDNSZoneID == null)
+			if(!is_array($portsArray))
 				continue;
 
-			$aUpdateDomains[$aDomainPart] = $aDNSZoneID;
-			//Für jeden geforderten Port/Domain einen Record vorbereiten
-			foreach($aPortsArray as $aPort)
+			$apiData = loadAPI(config: $config, identifier: $domain, apis: $apis);
+			if($apiData === array())
 			{
-				if(substr(string: $aDomain, offset: -strlen(".$aDomainPart")) == ".$aDomainPart")
-					$aDomainTag = '.' . substr_replace(string: $aDomain, replace: '', offset: -strlen(".$aDomainPart"));
-				elseif($aDomain == $aDomainPart)
-					$aDomainTag = '';
-				else
-					$aDomainTag = ".$aDomain.";
+				$errors[] = 'Keine passende DNS Zone fuer TLSA Domain gefunden: ' . $domain;
+				continue;
+			}
 
-				$aTLSARecords[$aDNSZoneID][] = array(
-					"type" =>		"TLSA",
-					"name" =>		"_$aPort._tcp$aDomainTag",
-					"value" =>		"3 1 1 $aHash",
-					);
+			$matchedDomain = $apiData['matchedDomain'];
+			$zoneID = $apiData['zoneID'];
+
+			foreach($portsArray as $port)
+			{
+				if(substr(string: $domain, offset: -strlen('.' . $matchedDomain)) === '.' . $matchedDomain)
+					$domainTag = '.' . substr_replace(string: $domain, replace: '', offset: -strlen('.' . $matchedDomain));
+				elseif($domain === $matchedDomain)
+					$domainTag = '';
+				else
+					$domainTag = '.' . $domain . '.';
+
+				$tlsaRecords[$zoneID][] = array(
+					'type' => 'TLSA',
+					'name' => '_' . $port . '._tcp' . $domainTag,
+					'value' => '3 1 1 ' . $hash,
+				);
 			}
 		}
 	}
 
-	foreach($aTLSARecords as $aDNSZoneID => $aRecords)
+	foreach($tlsaRecords as $zoneID => $records)
 	{
-		echo "Zone: $aDNSZoneID\t";
-		if($aAPIsArray[$aDNSZoneID]->multiSetRecords($aRecords))
-			echo "OK" . PHP_EOL;
+		echo 'Zone: ' . $zoneID . "\t";
+		if($apis[$zoneID]->multiSetRecords($records))
+			echo 'OK' . PHP_EOL;
 		else
-			echo "Fehler: " . $aAPIsArray[$aDNSZoneID]->lastError . PHP_EOL;
+		{
+			echo 'Fehler: ' . $apis[$zoneID]->lastError . PHP_EOL;
+			$errors[] = 'TLSA Update fuer Zone ' . $zoneID . ' fehlgeschlagen: ' . $apis[$zoneID]->lastError;
+		}
 	}
 
+	if(count($errors) > 0)
+		fail(implode(' | ', $errors));
+
 ?>
-
-
-
 
