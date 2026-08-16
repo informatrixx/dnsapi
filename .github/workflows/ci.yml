@@ -33,7 +33,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          forbidden_files="$(git ls-files | grep -E '(^|/)(config\.json|\.env($|\.)|.*\.log$|\.codex-sessions\.tsv$)' || true)"
+          forbidden_files="$(git ls-files | grep -E '(^|/)(config\\.json|\\.env($|\\.)|.*\\.log$|\\.codex-sessions\\.tsv$)' || true)"
           if [ -n "$forbidden_files" ]; then
             echo 'Runtime configuration must not be tracked:' >&2
             printf '%s\n' "$forbidden_files" >&2
