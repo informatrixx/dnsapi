@@ -33,12 +33,12 @@ jobs:
 
           test "$tag" = "v$version"
 
-          for forbidden in config.json .env; do
-            if git ls-files --error-unmatch "$forbidden" >/dev/null 2>&1; then
-              echo "Refusing to package tracked runtime configuration: $forbidden" >&2
-              exit 1
-            fi
-          done
+          forbidden_files="$(git ls-files | grep -E '(^|/)(config\.json|\.env($|\.)|.*\.log$|\.codex-sessions\.tsv$)' || true)"
+          if [ -n "$forbidden_files" ]; then
+            echo 'Refusing to package tracked runtime configuration:' >&2
+            printf '%s\n' "$forbidden_files" >&2
+            exit 1
+          fi
 
           mkdir -p dist
           archive="dist/dnsapi-$version.tar.gz"

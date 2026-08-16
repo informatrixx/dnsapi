@@ -33,12 +33,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for forbidden in config.json .env; do
-            if git ls-files --error-unmatch "$forbidden" >/dev/null 2>&1; then
-              echo "Runtime configuration must not be tracked: $forbidden" >&2
-              exit 1
-            fi
-          done
+          forbidden_files="$(git ls-files | grep -E '(^|/)(config\.json|\.env($|\.)|.*\.log$|\.codex-sessions\.tsv$)' || true)"
+          if [ -n "$forbidden_files" ]; then
+            echo 'Runtime configuration must not be tracked:' >&2
+            printf '%s\n' "$forbidden_files" >&2
+            exit 1
+          fi
 
       - name: Lint PHP files
         shell: bash
