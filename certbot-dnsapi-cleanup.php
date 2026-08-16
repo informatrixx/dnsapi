@@ -51,13 +51,12 @@
 		if(!isset($journal['journal']) || !is_array($journal['journal']))
 			$journal['journal'] = array();
 
-		foreach($journal['journal'] as $journalID => $entry)
-			if(
-				!is_string($journalID) ||
-				$journalID === '' ||
-				!is_array($entry) ||
-				!is_array($entry['record'] ?? null) ||
-				!is_string($entry['CERTBOT_VALIDATION'] ?? null)
+			foreach($journal['journal'] as $journalID => $entry)
+				if(
+					(string)$journalID === '' ||
+					!is_array($entry) ||
+					!is_array($entry['record'] ?? null) ||
+					!is_string($entry['CERTBOT_VALIDATION'] ?? null)
 			)
 				unset($journal['journal'][$journalID]);
 
@@ -66,6 +65,8 @@
 
 	function writeJournal($handle, array $journal): void
 	{
+		if(isset($journal['journal']) && is_array($journal['journal']))
+			$journal['journal'] = (object)$journal['journal'];
 		$json = json_encode(value: $journal, flags: JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 		if($json === false)
 			fail('Journal Daten konnten nicht serialisiert werden.');
