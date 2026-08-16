@@ -4,15 +4,26 @@
 	const CONFIG_FILE = '/etc/dnsapi/config.json';
 	const JOURNAL_FILE = '/var/cache/dnsapi/journal.json';
 	const DNSAPI_SOURCE_DIR = '/var/lib/dnsapi';
-	const PROPAGATION_NAMESERVER = '1.1.1.1';
-	const PROPAGATION_ATTEMPTS = 60;
-	const PROPAGATION_WAIT_SECONDS = 30;
+	const PROPAGATION_RESOLVERS = array('1.1.1.1', '8.8.8.8', '9.9.9.9');
+	const PROPAGATION_ATTEMPTS = 120;
+	const PROPAGATION_WAIT_SECONDS = 10;
 	const JOURNAL_ENTRY_TTL = 3600;
+	const DEBUG_LOG_FILE = '/var/cache/dnsapi/authenticator-debug.log';
 
 	function fail(string $message, int $exitCode = 1): never
 	{
+		debugLog('FAIL ' . $message);
 		fwrite(STDERR, $message . PHP_EOL);
 		exit($exitCode);
+	}
+
+	function debugLog(string $message): void
+	{
+		file_put_contents(
+			filename: DEBUG_LOG_FILE,
+			data: date('c') . ' ' . $message . PHP_EOL,
+			flags: FILE_APPEND,
+		);
 	}
 
 	function envValue(array $names): string
@@ -29,7 +40,7 @@
 
 	function normalizeIdentifierSet(string $identifiers, string $fallbackIdentifier): string
 	{
-		$parts = preg_split('/\s*,\s*/', $identifiers);
+		$parts = preg_split('/[\s,]+/', trim($identifiers));
 		if($parts === false)
 			$parts = array();
 
@@ -41,6 +52,28 @@
 		sort($parts, SORT_STRING);
 
 		return implode(',', $parts);
+	}
+
+	function identifierSetParts(string $identifierSet): array
+	{
+		$parts = $identifierSet === '' ? array() : explode(',', $identifierSet);
+		return array_values(array_filter($parts, fn($value) => $value !== ''));
+	}
+
+	function expectedChallengeCount(string $identifierSet): int
+	{
+		$identifiers = identifierSetParts($identifierSet);
+		$count = count($identifiers);
+		$baseDomains = array();
+		foreach($identifiers as $identifier)
+		{
+			if(str_starts_with($identifier, '*.'))
+				$baseDomains[substr($identifier, 2)] = true;
+			elseif(isset($baseDomains[$identifier]))
+				$count++;
+		}
+
+		return $count;
 	}
 
 	function loadConfig(): array
@@ -71,13 +104,12 @@
 		if(!isset($journal['journal']) || !is_array($journal['journal']))
 			$journal['journal'] = array();
 
-		foreach($journal['journal'] as $journalID => $entry)
-			if(
-				!is_string($journalID) ||
-				$journalID === '' ||
-				!is_array($entry) ||
-				!is_array($entry['record'] ?? null) ||
-				!is_string($entry['CERTBOT_VALIDATION'] ?? null)
+			foreach($journal['journal'] as $journalID => $entry)
+				if(
+					(string)$journalID === '' ||
+					!is_array($entry) ||
+					!is_array($entry['record'] ?? null) ||
+					!is_string($entry['CERTBOT_VALIDATION'] ?? null)
 			)
 				unset($journal['journal'][$journalID]);
 
@@ -86,6 +118,8 @@
 
 	function writeJournal($handle, array $journal): void
 	{
+		if(isset($journal['journal']) && is_array($journal['journal']))
+			$journal['journal'] = (object)$journal['journal'];
 		$json = json_encode(value: $journal, flags: JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
 		if($json === false)
 			fail('Journal Daten konnten nicht serialisiert werden.');
@@ -129,12 +163,12 @@
 		fail('Keine passende Domain in Authenticator DNS Konfiguration gefunden: ' . $identifier);
 	}
 
-	function txtRecordIsVisible(string $recordName, string $validation): bool
+	function txtLookupContains(string $recordName, string $validation, string $nameserver): bool
 	{
 		$output = array();
 		$status = 0;
 		exec(
-			command: 'dig +short +time=2 +tries=1 -t TXT ' . escapeshellarg($recordName) . ' @' . PROPAGATION_NAMESERVER,
+			command: 'dig +short +time=3 +tries=1 -t TXT ' . escapeshellarg($recordName) . ' @' . escapeshellarg($nameserver),
 			output: $output,
 			result_code: $status,
 		);
@@ -152,6 +186,130 @@
 		}
 
 		return false;
+	}
+
+	function getAuthoritativeNameservers(string $domain): array
+	{
+		$output = array();
+		$status = 0;
+		exec(
+			command: 'dig +short NS ' . escapeshellarg($domain),
+			output: $output,
+			result_code: $status,
+		);
+		if($status !== 0)
+			return array();
+
+		$nameservers = array();
+		foreach($output as $line)
+		{
+			$nameserver = strtolower(rtrim(trim($line), '.'));
+			if($nameserver !== '')
+				$nameservers[] = $nameserver;
+		}
+
+		return array_values(array_unique($nameservers));
+	}
+
+	function txtRecordIsVisibleEverywhere(string $recordName, string $zoneName, string $validation): bool
+	{
+		$nameservers = getAuthoritativeNameservers($zoneName);
+		if(count($nameservers) === 0)
+			return false;
+
+		foreach($nameservers as $nameserver)
+			if(!txtLookupContains(recordName: $recordName, validation: $validation, nameserver: $nameserver))
+				return false;
+
+		foreach(PROPAGATION_RESOLVERS as $resolver)
+			if(!txtLookupContains(recordName: $recordName, validation: $validation, nameserver: $resolver))
+				return false;
+
+		return true;
+	}
+
+	function providerRecordIsActive($api, array $record): bool
+	{
+		if(!isset($record['id']) || !is_string((string)$record['id']))
+			return true;
+		if(!method_exists($api, 'getRecords'))
+			return true;
+
+		$records = $api->getRecords();
+		if(!is_array($records))
+			return false;
+
+		$recordID = (string)$record['id'];
+		if(!isset($records[$recordID]))
+			return false;
+
+		$state = $records[$recordID]['state'] ?? null;
+		return $state === null || $state === 'yes';
+	}
+
+	function freshJournalEntriesForSet(array $journal, string $identifierSet): array
+	{
+		$entries = array();
+		foreach($journal['journal'] as $entry)
+		{
+			if(!is_array($entry))
+				continue;
+			if(($entry['IDENTIFIER_SET'] ?? '') !== $identifierSet)
+				continue;
+			if(!isset($entry['created_at']) || !is_int($entry['created_at']) || $entry['created_at'] < time() - JOURNAL_ENTRY_TTL)
+				continue;
+
+			$entries[] = $entry;
+		}
+
+		return $entries;
+	}
+
+	function shouldWaitForSet(int $remainingChallenges, array $entries, string $identifierSet): bool
+	{
+		return $remainingChallenges === 0;
+	}
+
+	function waitForChallengeEntries(array $config, array $entries): array
+	{
+		$pending = array();
+		foreach($entries as $index => $entry)
+			$pending[$index] = $entry;
+
+		for($attempt = 0; $attempt < PROPAGATION_ATTEMPTS && count($pending) > 0; $attempt++)
+		{
+			foreach($pending as $index => $entry)
+			{
+				$entryIdentifier = $entry['CERTBOT_IDENTIFIER'] ?? $entry['CERTBOT_DOMAIN'] ?? '';
+				$entryValidation = $entry['CERTBOT_VALIDATION'] ?? '';
+				$entryRecord = is_array($entry['record'] ?? null) ? $entry['record'] : array();
+
+				if(!is_string($entryIdentifier) || $entryIdentifier === '' || !is_string($entryValidation) || $entryValidation === '')
+				{
+					unset($pending[$index]);
+					continue;
+				}
+
+				$recordName = '_acme-challenge.' . rtrim($entryIdentifier, '.') . '.';
+				$apiData = loadAPI(config: $config, identifier: $entryIdentifier);
+				if(
+					providerRecordIsActive(api: $apiData['api'], record: $entryRecord) &&
+					txtRecordIsVisibleEverywhere(recordName: $recordName, zoneName: $apiData['matchedDomain'], validation: $entryValidation)
+				)
+				{
+					debugLog('VISIBLE identifier=' . $entryIdentifier . ' record=' . ($entryRecord['id'] ?? 'n/a'));
+					unset($pending[$index]);
+				}
+			}
+
+			if(count($pending) === 0)
+				break;
+
+			debugLog('WAIT attempt=' . $attempt . ' pending=' . count($pending));
+			sleep(PROPAGATION_WAIT_SECONDS);
+		}
+
+		return array_values($pending);
 	}
 
 	interface DNSAPIv1 {
@@ -188,6 +346,7 @@
 		: ((isset($record['id']) && is_string($record['id']) && $record['id'] !== '') ? $record['id'] : '');
 	if($journalID === '')
 		fail('DNS API hat keine gueltige Record-ID fuer das Journal geliefert.');
+	debugLog('CREATE identifier=' . $identifier . ' remaining=' . $remainingChallenges . ' identifier_set=' . $identifierSet . ' record=' . $journalID);
 
 	$journalHandle = openJournalFile();
 	if(!flock($journalHandle, LOCK_EX))
@@ -213,56 +372,26 @@
 	// Der Cleanup-Hook bekommt diesen Wert ueber CERTBOT_AUTH_OUTPUT.
 	echo $journalID . PHP_EOL;
 
-	if($remainingChallenges === 0)
+	$journalHandle = openJournalFile();
+	if(!flock($journalHandle, LOCK_SH))
+		fail('Journal Datei konnte nicht fuer das Lesen gesperrt werden: ' . JOURNAL_FILE);
+	try {
+		$journal = readJournal($journalHandle);
+	}
+	finally {
+		flock($journalHandle, LOCK_UN);
+		fclose($journalHandle);
+	}
+
+	$pendingEntries = freshJournalEntriesForSet(journal: $journal, identifierSet: $identifierSet);
+	debugLog('STATE identifier=' . $identifier . ' remaining=' . $remainingChallenges . ' pending_entries=' . count($pendingEntries) . ' expected=' . expectedChallengeCount($identifierSet));
+	if(shouldWaitForSet(remainingChallenges: $remainingChallenges, entries: $pendingEntries, identifierSet: $identifierSet))
 	{
-		$journalHandle = openJournalFile();
-		if(!flock($journalHandle, LOCK_SH))
-			fail('Journal Datei konnte nicht fuer das Lesen gesperrt werden: ' . JOURNAL_FILE);
-
-		try {
-			$journal = readJournal($journalHandle);
-		}
-		finally {
-			flock($journalHandle, LOCK_UN);
-			fclose($journalHandle);
-		}
-
-		$pendingEntries = array();
-		foreach($journal['journal'] as $entry)
-		{
-			if(!is_array($entry))
-				continue;
-			if(($entry['IDENTIFIER_SET'] ?? '') !== $identifierSet)
-				continue;
-			if(!isset($entry['created_at']) || !is_int($entry['created_at']) || $entry['created_at'] < time() - JOURNAL_ENTRY_TTL)
-				continue;
-
-			$pendingEntries[] = $entry;
-		}
-
-		foreach($pendingEntries as $entry)
-		{
-			$entryIdentifier = $entry['CERTBOT_IDENTIFIER'] ?? $entry['CERTBOT_DOMAIN'] ?? '';
-			$entryValidation = $entry['CERTBOT_VALIDATION'] ?? '';
-			if(!is_string($entryIdentifier) || $entryIdentifier === '' || !is_string($entryValidation) || $entryValidation === '')
-				continue;
-
-			$recordName = '_acme-challenge.' . rtrim($entryIdentifier, '.') . '.';
-			$isVisible = false;
-			for($attempt = 0; $attempt < PROPAGATION_ATTEMPTS; $attempt++)
-			{
-				if(txtRecordIsVisible(recordName: $recordName, validation: $entryValidation))
-				{
-					$isVisible = true;
-					break;
-				}
-
-				sleep(PROPAGATION_WAIT_SECONDS);
-			}
-
-			if(!$isVisible)
-				fail('DNS TXT Record wurde innerhalb des Zeitlimits nicht sichtbar: ' . $recordName);
-		}
+		debugLog('WAIT_START entries=' . count($pendingEntries));
+		$unresolvedEntries = waitForChallengeEntries(config: $config, entries: $pendingEntries);
+		if(count($unresolvedEntries) > 0)
+			fail('Nicht alle DNS TXT Records wurden innerhalb des Zeitlimits sichtbar.');
+		debugLog('WAIT_DONE entries=' . count($pendingEntries));
 	}
 
 ?>
