@@ -1,0 +1,61 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Build and publish release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged commit
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Validate version and archive contents
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          tag="${GITHUB_REF_NAME}"
+
+          case "$version" in
+            [0-9]*.[0-9]*.[0-9]*) ;;
+            *) echo "VERSION is not SemVer: $version" >&2; exit 1 ;;
+          esac
+
+          test "$tag" = "v$version"
+
+          forbidden_files="$(git ls-files | grep -E '(^|/)(config\\.json|\\.env($|\\.)|.*\\.log$|\\.codex-sessions\\.tsv$)' || true)"
+          if [ -n "$forbidden_files" ]; then
+            echo 'Refusing to package tracked runtime configuration:' >&2
+            printf '%s\n' "$forbidden_files" >&2
+            exit 1
+          fi
+
+          mkdir -p dist
+          archive="dist/dnsapi-$version.tar.gz"
+          git archive --format=tar.gz --prefix="dnsapi-$version/" "$tag" > "$archive"
+
+          if tar -tzf "$archive" | grep -E '(^|/)(config\\.json|\\.env($|\\.)|.*\\.log$|\\.codex-sessions\\.tsv$)' >/dev/null; then
+            echo 'Release archive contains forbidden runtime data.' >&2
+            exit 1
+          fi
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          version="$(tr -d '[:space:]' < VERSION)"
+          gh release create "$GITHUB_REF_NAME" "dist/dnsapi-$version.tar.gz" \
+            --title "dnsapi $version" \
+            --generate-notes
