@@ -264,7 +264,7 @@
 					$this->records[(string)$aDNSRecord['id']] = $aDNSRecord;
 			}
 
-			function createRecord(?string $name = null, string $type = null, ?string $value = null, ?int $ttl = null, ?array $record = null)
+			function createRecord(?string $name = null, ?string $type = null, ?string $value = null, ?int $ttl = null, ?array $record = null)
 			{
 				$aRecord = $this->normalizeRecord($record ?? array(), name: $name, type: $type, value: $value, ttl: $ttl);
 				if($aRecord === false)

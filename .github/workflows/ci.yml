@@ -16,7 +16,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        php-version: ['8.4']
+        php-version: ['8.4', '8.5']
 
     steps:
       - name: Check out repository
@@ -45,5 +45,9 @@ jobs:
         run: |
           set -euo pipefail
           while IFS= read -r file; do
-            php -l "$file"
+            output="$(php -d error_reporting=E_ALL -d display_errors=stderr -l "$file" 2>&1)"
+            printf '%s\n' "$output"
+            if [[ "$output" == *Deprecated:* || "$output" == *Warning:* ]]; then
+              exit 1
+            fi
           done < <(git ls-files '*.php')

@@ -64,7 +64,7 @@
 		}
 
 
-		function createRecord(?string $name = null, string $type = null, ?string $value = null, ?int $ttl = null, ?array $record = null)
+		function createRecord(?string $name = null, ?string $type = null, ?string $value = null, ?int $ttl = null, ?array $record = null)
 		{
 			//Wenn kein $name || $type 
 			//oder kein array $record mit ['name'] || ['type']

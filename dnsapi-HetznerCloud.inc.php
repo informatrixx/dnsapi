@@ -25,12 +25,6 @@
 			$this->records = $this->getRecords();
 		}
 
-		function __destruct()
-		{
-			if($this->pCURL)
-				curl_close($this->pCURL);
-		}
-
 		private function detectZoneName()
 		{
 			if(defined('DOMAIN_API_LOADED') && is_string(DOMAIN_API_LOADED))

@@ -9,7 +9,7 @@
 
 ## Voraussetzungen
 
-- PHP 8.4 mit cURL
+- PHP 8.4 oder 8.5 mit cURL (CLI; für den HTTP-Endpunkt zusätzlich PHP-FPM/Apache mit einer dieser Versionen)
 - `dig` im PATH (für TXT-Propagation-Prüfung)
 - `openssl` im PATH (für TLSA-Hash)
 - Laufzeit-Config unter `/etc/dnsapi/config.json` (nicht ins Repo einchecken)
@@ -28,6 +28,20 @@ Erforderliche Runtime-Pfade:
 - `/var/cache/dnsapi` (journal/cache)
 
 Empfehlung: Datei- und Verzeichnisrechte restriktiv halten (`0600` / `0700`).
+
+### PHP-Version
+
+CLI und Certbot-Hooks verwenden `/usr/bin/php` als Interpreter und unterstützen
+PHP 8.4 und 8.5. Prüfe die aktive Version und die cURL-Erweiterung:
+
+```bash
+/usr/bin/php -v
+/usr/bin/php --ri curl
+```
+
+Direkte Aufrufe wie `./dnsapi-interface.php` bleiben unverändert. Ein Wechsel
+zwischen PHP 8.4 und 8.5 erfordert keine Anpassung der Skripte. Für `index.php`
+wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 
 ## Konfiguration
 
@@ -117,8 +131,11 @@ Die Domain muss als DynDNS-Host in der Konfiguration freigeschaltet sein.
 Kein Buildsystem. Direkte PHP-Syntaxprüfung:
 
 ```bash
-for f in $(git ls-files '*.php'); do php -l "$f"; done
+for f in $(git ls-files '*.php'); do php -d error_reporting=E_ALL -l "$f"; done
 ```
+
+CI prüft PHP 8.4 und 8.5. Lokal lässt sich derselbe Check mit `php8.4` und
+`php8.5` statt `php` für beide installierten Versionen ausführen.
 
 ## Versionierung
 

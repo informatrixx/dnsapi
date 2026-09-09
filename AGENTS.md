@@ -6,15 +6,15 @@ This repository is a flat PHP codebase. `index.php` is the HTTP entry point for 
 ## Build, Test, and Development Commands
 There is no build system, Composer setup, or automated test runner in this repo. Use PHP CLI tooling directly:
 
-- `php -l index.php` checks syntax for a single file.
-- `php -l dnsapi-interface.php` checks the CLI entry point.
-- `php dnsapi-interface.php -x example.com -p` prints records for a configured zone.
-- `php dnsapi-interface.php -x example.com -s test:A=203.0.113.10:600` performs a manual record upsert against configured provider credentials.
+- `php -d error_reporting=E_ALL -l index.php` checks syntax for a single file.
+- `php -d error_reporting=E_ALL -l dnsapi-interface.php` checks the CLI entry point.
+- `./dnsapi-interface.php -x example.com -p` prints records for a configured zone.
+- `./dnsapi-interface.php -x example.com -s test:A=203.0.113.10:600` performs a manual record upsert against configured provider credentials.
 
 Run manual integration checks only with non-production zones or throwaway records.
 
 ## Coding Style & Naming Conventions
-Follow the existing style: tabs for indentation, K&R-style braces, and procedural top-level scripts with provider classes. Keep file names in the current pattern: `dnsapi-<Provider>.inc.php` for adapters and `certbot-*.php` for Certbot hooks. Match the codebase’s use of `array(...)`, `$a*` local variables, and descriptive constant names such as `CONFIG_FILE`. The code uses named arguments and runs on PHP 8.4, so keep new code compatible with modern PHP.
+Follow the existing style: tabs for indentation, K&R-style braces, and procedural top-level scripts with provider classes. Keep file names in the current pattern: `dnsapi-<Provider>.inc.php` for adapters and `certbot-*.php` for Certbot hooks. Match the codebase’s use of `array(...)`, `$a*` local variables, and descriptive constant names such as `CONFIG_FILE`. Support PHP 8.4 and 8.5 with cURL and resolve deprecation warnings on both versions. Executable scripts use `/usr/bin/php`; the HTTP endpoint also supports either version.
 
 ## Testing Guidelines
 No formal coverage threshold exists. At minimum, lint changed PHP files and smoke-test the affected path. For HTTP changes, hit `index.php` with a known test host/domain/secret combination. For provider changes, verify `-p`, `-s`, and delete flows through `dnsapi-interface.php`. Document any untested paths in the PR.

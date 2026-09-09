@@ -8,7 +8,7 @@ Use short imperative commit subjects, such as `Fix DNS propagation handling for 
 
 ## Validation
 
-Run PHP syntax checks for every changed file and use `git diff --check`. Provider smoke tests must use an approved test zone or read-only commands such as:
+Support PHP 8.4 and 8.5 with cURL. Run `php -d error_reporting=E_ALL -l file.php` for every changed PHP file on both versions and use `git diff --check`. Resolve deprecation warnings as well as syntax errors; CI checks both versions. Provider smoke tests must use an approved test zone or read-only commands such as:
 
 ```sh
 ./dnsapi-interface.php -x example.com -p
