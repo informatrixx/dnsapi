@@ -2,6 +2,14 @@
 	require_once __DIR__ . '/dnsapi-runtime.inc.php';
 
 	class DNSAPIProcess {
+		static function errorCode(int $exit, string $output, string $stderr = ''): string {
+			if($exit === 0) return 'OK';
+			if($exit === 124) return 'TIMEOUT';
+			$message = strtolower($output . "\n" . $stderr);
+			foreach(array('network is unreachable' => 'NETWORK_UNREACHABLE', 'network unreachable' => 'NETWORK_UNREACHABLE', 'no route to host' => 'NO_ROUTE', 'connection refused' => 'CONNECTION_REFUSED', 'permission denied' => 'PERMISSION_DENIED', 'operation not permitted' => 'PERMISSION_DENIED', 'timed out' => 'TIMEOUT') as $text => $code)
+				if(str_contains($message, $text)) return $code;
+			return $exit === 9 ? 'NO_RESPONSE' : 'PROCESS_ERROR';
+		}
 		static function run(array $arguments, float $timeout): array {
 			$start = hrtime(true);
 			$process = proc_open($arguments, array(0 => array('file', '/dev/null', 'r'), 1 => array('pipe', 'w'), 2 => array('pipe', 'w')), $pipes, null, array('PATH' => getenv('PATH') ?: '/usr/bin:/bin', 'LC_ALL' => 'C'));
@@ -9,23 +17,30 @@
 				throw new RuntimeException('DNS_PROCESS_FAILED');
 			foreach($pipes as $pipe) stream_set_blocking($pipe, false);
 			$output = '';
+			$stderr = '';
 			$timedOut = false;
+			$outputLimit = false;
 			do {
 				$output .= stream_get_contents($pipes[1]);
-				stream_get_contents($pipes[2]);
+				$stderr .= stream_get_contents($pipes[2]);
 				$status = proc_get_status($process);
 				if(!$status['running']) break;
-				if((hrtime(true) - $start) / 1e9 >= $timeout || strlen($output) > 1048576) {
-					$timedOut = true;
+				$outputLimit = strlen($output) + strlen($stderr) > 1048576;
+				if((hrtime(true) - $start) / 1e9 >= $timeout || $outputLimit) {
+					$timedOut = !$outputLimit;
 					proc_terminate($process, 9);
 					break;
 				}
 				usleep(1000);
 			} while(true);
 			$output .= stream_get_contents($pipes[1]);
+			$stderr .= stream_get_contents($pipes[2]);
 			foreach($pipes as $pipe) fclose($pipe);
 			$exit = proc_close($process);
-			return array('output' => $output, 'exit' => $timedOut ? 124 : ($status['exitcode'] >= 0 ? $status['exitcode'] : $exit), 'duration_ms' => (int)((hrtime(true) - $start) / 1e6));
+			$exit = $timedOut ? 124 : ($status['exitcode'] >= 0 ? $status['exitcode'] : $exit);
+			$error = $outputLimit ? 'OUTPUT_LIMIT' : self::errorCode($exit, $output, $stderr);
+			// Only the classified error crosses the boundary; stderr may contain inputs.
+			return array('output' => $output, 'exit' => $exit, 'error' => $error, 'duration_ms' => (int)((hrtime(true) - $start) / 1e6));
 		}
 	}
 
@@ -79,8 +94,10 @@
 				$result = self::parse($process['output'], $name, $expected);
 				$result += array('server' => $server, 'transport' => $transport, 'exit' => $process['exit'], 'duration_ms' => $process['duration_ms']);
 				$hasTXT = count(array_filter($result['records'], fn($record) => $record['type'] === 'TXT')) > 0;
-				$result['error'] = $result['exit'] !== 0 ? ($result['exit'] === 124 || $result['exit'] === 9 ? 'TIMEOUT' : 'PROCESS_ERROR') : ($result['tc'] ? 'TRUNCATED' : ($result['rcode'] !== 'NOERROR' ? $result['rcode'] : ($authoritative && !$result['aa'] ? 'NOT_AUTHORITATIVE' : ($expected !== '' && !$result['matched'] ? ($hasTXT ? 'TXT_MISMATCH' : 'NODATA') : 'OK'))));
+				$processError = $process['error'] ?? DNSAPIProcess::errorCode($result['exit'], $process['output']);
+				$result['error'] = $processError !== 'OK' ? $processError : ($result['tc'] ? 'TRUNCATED' : ($result['rcode'] !== 'NOERROR' ? $result['rcode'] : ($authoritative && !$result['aa'] ? 'NOT_AUTHORITATIVE' : ($expected !== '' && !$result['matched'] ? ($hasTXT ? 'TXT_MISMATCH' : 'NODATA') : 'OK'))));
 				$attempts[] = array_intersect_key($result, array_flip(array('transport', 'exit', 'rcode', 'error', 'duration_ms')));
+				if(in_array($result['error'], array('NETWORK_UNREACHABLE', 'NO_ROUTE', 'PERMISSION_DENIED', 'OUTPUT_LIMIT'), true)) break;
 				if($result['exit'] === 0 && !$result['tc']) break;
 			}
 			$result['attempts'] = $attempts;
@@ -119,8 +136,10 @@
 			}
 		}
 		function check(string $name, string $expected, array $servers): array {
+			$mode = $this->settings['propagation_mode'] ?? 'strict';
+			if($mode === 'recursive') $servers = array();
 			$results = array();
-			$success = true;
+			$success = $mode === 'recursive' || count($servers) > 0;
 			foreach($servers as $server => $addresses) {
 				$confirmed = false;
 				$contradiction = false;
@@ -139,6 +158,20 @@
 				$results[] = $this->summary($result, 'recursive', $ip);
 			}
 			return array('success' => $success, 'results' => $results);
+		}
+		static function providerPreflight(array $records, string $zone, string $name): void {
+			$zone = strtolower(rtrim($zone, '.'));
+			$name = strtolower(rtrim($name, '.'));
+			if(!str_ends_with($name, '.' . $zone)) throw new RuntimeException('CHALLENGE_ZONE_MISMATCH');
+			foreach($records as $record) {
+				if(!is_array($record)) throw new RuntimeException('PROVIDER_RECORD_INVALID');
+				$type = strtoupper($record['type'] ?? '');
+				$owner = strtolower(rtrim($record['name'] ?? $record['hostname'] ?? '', '.'));
+				if($owner === '@' || $owner === '') $owner = $zone;
+				elseif($owner !== $zone && !str_ends_with($owner, '.' . $zone)) $owner .= '.' . $zone;
+				$onPath = $name === $owner || str_ends_with($name, '.' . $owner);
+				if(($type === 'CNAME' && $name === $owner) || ($type === 'NS' && $owner !== $zone && $onPath) || ($type === 'DNAME' && $onPath)) throw new RuntimeException('CHALLENGE_DELEGATION_UNSUPPORTED');
+			}
 		}
 		function summary(array $result, string $group, string $name): array {
 			return array('group' => $group, 'nameserver' => $name) + array_intersect_key($result, array_flip(array('server', 'transport', 'exit', 'duration_ms', 'rcode', 'aa', 'ra', 'rd', 'matched', 'ttl', 'negative_ttl', 'error', 'attempts')));

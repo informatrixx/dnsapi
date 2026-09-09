@@ -32,9 +32,11 @@
 		$apis = array();
 		$data = dnsapiProvider($config, $identifier, $apis);
 		$dns = new DNSAPIDNS($settings, $GLOBALS['dnsapiDeadline']);
-		$dns->preflight('_acme-challenge.' . $identifier, $dns->authorities($data['zone']));
+		if($settings['propagation_mode'] === 'strict')
+			$dns->preflight('_acme-challenge.' . $identifier, $dns->authorities($data['zone']));
 		$records = $data['api']->getRecords();
 		if(!is_array($records)) throw new RuntimeException('PROVIDER_READ_FAILED');
+		if($settings['propagation_mode'] === 'recursive') DNSAPIDNS::providerPreflight($records, $data['zone'], '_acme-challenge.' . $identifier);
 		$existing = dnsapiFindChallenge($records, $data['zone'], $identifier, $validation);
 		$id = bin2hex(random_bytes(16));
 		$entry = array('run' => $run, 'owned' => $existing === null, 'phase' => 'prepared', 'provider_key' => $data['key'], 'zone' => $data['zone'],

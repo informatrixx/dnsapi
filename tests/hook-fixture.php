@@ -30,6 +30,7 @@
 	$GLOBALS['dnsapiProviderFactory'] = fn() => new HookFixtureAPI();
 	$GLOBALS['dnsapiDNSRunner'] = function($args, $timeout) {
 		$type = $args[6];
+		if(getenv('DNSAPI_FIXTURE_FAILURE') === 'authority' && ($type !== 'TXT' || in_array('+norecurse', $args, true))) throw new RuntimeException('UNEXPECTED_AUTHORITY_QUERY');
 		$name = $args[4];
 		$answers = '';
 		if($type === 'NS') $answers = "$name 120 IN NS ns.example.test.\n";

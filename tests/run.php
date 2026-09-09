@@ -29,6 +29,25 @@
 	$result = DNSAPIDNS::parse($negative, $name, 'expected');
 	check($result['negative_ttl'] === 3400 && !$result['aa'] && $result['ra'], 'negative TTL and flags');
 	$settings = dnsapiSettings(array());
+	check($settings['propagation_mode'] === 'strict', 'strict mode remains default');
+	rejects(fn() => dnsapiSettings(array('certbot' => array('propagation_mode' => 'fallback'))), 'unknown mode rejected');
+	$recursive = array_replace($settings, array('propagation_mode' => 'recursive'));
+	$dns = new DNSAPIDNS($recursive, new DNSAPIDeadline(5), function($args) use ($txt) {
+		check(!in_array('+norecurse', $args, true), 'recursive mode never queries authorities');
+		return array('output' => answer(flags: 'qr rd ra', records: $txt . '"expected"'), 'exit' => 0, 'duration_ms' => 1);
+	});
+	check($dns->check($name, 'expected', array('ns' => array('192.0.2.1')))['success'], 'recursive mode accepts exact value without AA');
+	$dns = new DNSAPIDNS($recursive, new DNSAPIDeadline(5), fn($args) => array('output' => answer(flags: 'qr rd ra', records: $txt . ($args[2] === '@8.8.8.8' ? '"old"' : '"expected"')), 'exit' => 0, 'duration_ms' => 1));
+	check(!$dns->check($name, 'expected', array())['success'], 'every configured resolver must match');
+	$dns = new DNSAPIDNS($recursive, new DNSAPIDeadline(5), fn($args) => $args[2] === '@8.8.8.8' ? array('output' => 'timed out', 'exit' => 9, 'duration_ms' => 1) : array('output' => answer(flags: 'qr rd ra', records: $txt . '"expected"'), 'exit' => 0, 'duration_ms' => 1));
+	check(!$dns->check($name, 'expected', array())['success'], 'missing mandatory resolver prevents recursive success');
+	foreach(array(array('name' => '_acme-challenge', 'type' => 'CNAME'), array('hostname' => '_acme-challenge', 'type' => 'NS'), array('name' => '@', 'type' => 'DNAME')) as $record)
+		rejects(fn() => DNSAPIDNS::providerPreflight(array($record), 'example.test', $name), 'provider preflight rejects delegation ' . $record['type']);
+	DNSAPIDNS::providerPreflight(array(array('name' => '@', 'type' => 'NS'), array('name' => 'other', 'type' => 'CNAME')), 'example.test', $name);
+	check(true, 'zone NS and unrelated CNAME allowed');
+	rejects(fn() => DNSAPIDNS::providerPreflight(array(array('name' => 'mail', 'type' => 'NS')), 'example.test', '_acme-challenge.mail.example.test'), 'ancestor NS delegation rejected');
+	rejects(fn() => DNSAPIDNS::providerPreflight(array(array('hostname' => 'mail.example.test.', 'type' => 'DNAME')), 'example.test', '_acme-challenge.mail.example.test'), 'absolute ancestor DNAME rejected');
+	rejects(fn() => DNSAPIDNS::providerPreflight(array(), 'example.test', '_acme-challenge.other.test'), 'zone mismatch rejected');
 	$settings['discovery_resolver'] = '192.0.2.53';
 	$seen = array();
 	$runner = function($args, $timeout) use (&$seen, $negative, $txt) {
@@ -73,6 +92,16 @@
 	$start = hrtime(true);
 	$result = DNSAPIProcess::run(array(PHP_BINARY, '-r', 'usleep(1000000);'), 0.05);
 	check($result['exit'] === 124 && (hrtime(true) - $start) / 1e9 < 0.5, 'process hard timeout');
+	foreach(array('network unreachable' => 'NETWORK_UNREACHABLE', 'Network is unreachable' => 'NETWORK_UNREACHABLE', 'No route to host' => 'NO_ROUTE', 'connection refused' => 'CONNECTION_REFUSED', 'permission denied' => 'PERMISSION_DENIED', 'timed out' => 'TIMEOUT', 'no servers could be reached' => 'NO_RESPONSE') as $message => $code) {
+		check(DNSAPIProcess::errorCode(9, $message) === $code, 'dig exit 9 distinguished: ' . $code);
+		$process = DNSAPIProcess::run(array(PHP_BINARY, '-r', 'fwrite(STDERR, $argv[1]); exit(9);', $message . ' private-fixture-value'), 1);
+		check($process['error'] === $code && !str_contains(json_encode($process), 'private-fixture-value'), 'stderr classified without leaking input: ' . $code);
+	}
+	$dns = new DNSAPIDNS($settings, new DNSAPIDeadline(5), fn() => array('output' => ';; network unreachable', 'exit' => 9, 'duration_ms' => 1));
+	$result = $dns->query($name, 'TXT', '2001:db8::1', true, 'expected');
+	check($result['error'] === 'NETWORK_UNREACHABLE' && count($result['attempts']) === 1, 'no TCP retry when IP has no route');
+	$dns = new DNSAPIDNS($settings, new DNSAPIDeadline(5), fn($args) => $args[2] === '@2001:db8::1' ? array('output' => 'network unreachable', 'exit' => 9, 'duration_ms' => 1) : array('output' => answer(records: $txt . '"expected"'), 'exit' => 0, 'duration_ms' => 1));
+	check($dns->check($name, 'expected', array('ns' => array('2001:db8::1', '192.0.2.1')))['success'], 'unroutable IPv6 does not block verified IPv4');
 	$deadline = new DNSAPIDeadline(0.01);
 	$deadline->pause(1);
 	rejects(fn() => $deadline->check(), 'sleep respects deadline');

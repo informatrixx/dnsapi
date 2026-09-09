@@ -22,6 +22,7 @@ Optional top-level configuration, shown with defaults:
 ```json
 {
   "certbot": {
+    "propagation_mode": "strict",
     "propagation_timeout_seconds": 1200,
     "dns_timeout_seconds": 3,
     "poll_interval_seconds": 10,
@@ -51,12 +52,39 @@ not the number of unique domains. Apex and wildcard values remain separate.
 
 ## Verification and Diagnostics
 
-Every authoritative nameserver must confirm the exact TXT value with AA set;
+`propagation_mode` accepts only `strict` (the default) or `recursive`. There is
+no automatic fallback between them. Unknown values fail before DNS writes.
+
+In `strict` mode every authoritative nameserver must confirm the exact TXT value with AA set;
 every configured recursive resolver must also confirm it. For multiple IPs of
 one nameserver, at least one must confirm; contradictory reachable answers block
 success. An unreachable IPv6 address alone does not defeat successful IPv4.
-CNAMEs and delegated challenge names are rejected by the authoritative preflight
+CNAMEs and delegated challenge names are rejected by the strict authoritative preflight
 before mutation. There is no automatic weaker verification mode.
+
+Use `recursive` explicitly for networks where direct authoritative queries are
+unavailable. This mode makes no authoritative or NS-discovery DNS calls in the
+hooks. It still requires the provider's active record and the exact challenge
+value at **every** configured recursive resolver, within the same deadline.
+Old TXT values, partial resolver success and elapsed time alone never suffice.
+All challenges are created first and verified together by the last hook.
+
+Before writing, recursive mode checks the provider inventory for CNAME at the
+challenge owner, NS delegation below the configured zone along the name's path,
+and DNAME on that path. These are rejected; ordinary zone-apex NS records are
+allowed. No recursive query of the new challenge name is made before creation,
+avoiding unnecessary negative cache entries. Administrators must verify actual
+public delegation and zone mapping; inventory checks cannot prove these remotely.
+
+This mode gives up direct authority confirmation, not ACME validation. Multiple
+resolver IPs need not be independent if the network redirects DNS. Let's Encrypt
+still checks the challenge itself. Repairing the network remains a separate task.
+Certbot can continue ACME validation after a failed manual auth hook. Therefore
+its successful exit or an issued certificate alone does not prove that the local
+resolver policy passed. Check auth-hook errors as well as the Certbot result;
+DNSAPI does not forcibly terminate the parent Certbot process on hook failure.
+To enable the mode, add `"propagation_mode": "recursive"` inside the existing
+`certbot` configuration object. Keep a separate configuration for initial tests.
 
 All groups are queried per round within the deadline, even when one group fails.
 Diagnostics include RCODE, AA/RA/RD, target IP, transport, duration, matching state
@@ -67,18 +95,57 @@ visibility nor identify network interception. Inspect the target network separat
 ```sh
 ./dnsapi-doctor.php --domain example.com
 ./dnsapi-doctor.php --domain mail.example.com --zone example.com
+./dnsapi-doctor.php --domain example.com --authorities
 ```
 
 Doctor performs DNS reads only, without provider calls. Without
 `DNSAPI_EXPECTED_TXT` it diagnoses DNS paths, not challenge propagation. Set that
 environment variable privately to check a specific value; it is never printed.
+Output identifies the configured mode. In recursive mode `--authorities` adds
+optional direct-authority diagnostics with a separate 60-second budget; their
+failure does not change the recursive check's exit status. Without that flag,
+recursive-mode Doctor does not discover or query authorities.
 Avoid querying nonexistent challenges through recursive resolvers immediately
 before issuance: this can create negative cache entries. Normal auth preflight
-queries challenge names only at authoritative IPs.
+queries challenge names only at authoritative IPs in strict mode; recursive
+mode uses only provider inventory for preflight.
 
 Diagnostics use stderr (doctor uses stdout JSON) without raw answers or TXT values.
+Process failures distinguish `NETWORK_UNREACHABLE`, `NO_ROUTE`,
+`CONNECTION_REFUSED`, `PERMISSION_DENIED`, `TIMEOUT` and `NO_RESPONSE`.
+DNS `REFUSED` is a received DNS response, not a refused TCP connection.
+An absent route or a local permission error is not retried over TCP. A successful
+IPv4 authority check still works when the same nameserver's IPv6 is unroutable.
 The old `authenticator-debug.log` is no longer appended. If redirecting stderr,
 protect and rotate that external log with the service's logging facilities.
+
+### Investigating REFUSED Responses
+
+Compare the same zone SOA query from the affected container, its host and an
+independent network. Use the IPs discovered for that zone, not unrelated resolvers:
+
+```sh
+dig -r @AUTHORITY_IP example.com. SOA +norecurse +notcp +ignore +time=3 +tries=1
+dig -r @AUTHORITY_IP example.com. SOA +norecurse +tcp +time=3 +tries=1
+dig -r @AUTHORITY_IP example.com. SOA +recurse +tcp +time=3 +tries=1
+```
+
+A DNS response advertising recursion without AA does not confirm authority.
+Recursive answers from the addressed path can indicate a forwarding/interception
+path or an unexpected server configuration; the flags alone do not locate its
+cause. Inspect outbound TCP/UDP port 53 policies and DNS redirects on the host,
+hypervisor and upstream gateway. Changing `/etc/resolv.conf` cannot repair an
+explicit `@IP` query that is intercepted downstream. Never count recursive
+responses as authoritative to hide this failure.
+
+On the development host on 2026-09-09, direct IPv4 SOA queries to all three
+discovered Hetzner authority addresses returned `REFUSED` without AA and with RA.
+A recursive query to the same addressed path returned answers for another domain.
+Local nftables inspection found no matching outbound DNS redirect; IPv6 routing
+reported network unreachable. The failing external DNS path remains unresolved;
+no gateway or network policies were modified. The staging attempt created no
+challenge or certificate. This is a host-specific observation, not a general
+claim about Hetzner's nameservers.
 
 ## Recovery
 
@@ -123,3 +190,14 @@ promise power-loss durability of directory metadata on every filesystem.
 The source feedback is retained in [docs/feedback](feedback/2026-09-09_10-28-48_UTC_DNSAPI_Feedback_naechste_Version.md).
 Before production rollout, run staging issuance and renewal dry-run on an approved
 zone in the target environment. Offline fixtures cannot validate that network path.
+
+### Recursive-Mode Live Verification (2026-09-09)
+
+An isolated `mocu.at` staging test used all three default resolvers. The first
+issuance obtained a staging certificate, but its auth hook timed out on a negative
+Quad9 cache response; this was not a successful local-policy check. The subsequent
+renewal dry-run succeeded with fresh challenge creation, exact matches at all three
+resolvers and no hook errors. Provider reads confirmed removal of both test
+challenge values, and the test journal was empty. Production configuration and
+certificates were not changed. These results validate this test environment, not
+global DNS visibility or future cache behavior.

@@ -6,7 +6,23 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-09-09
+
+### Added
+
+- Explicit `certbot.propagation_mode` (`strict` by default, or `recursive`) for resolver-based verification without direct authoritative DNS access; no automatic fallback.
+- Recursive preflight checks provider records for CNAME, NS delegation and DNAME; Doctor supports optional non-blocking authority diagnostics via `--authorities`.
+
+### Fixed
+
+- Distinguish unroutable networks, refused connections, permission errors and missing responses from actual DNS timeouts; classify stderr without logging raw input.
+- Skip ineffective TCP retries when an IP has no route or access is denied, while retaining strict authoritative verification.
+
 ## [0.2.0] - 2026-09-09
+
+Withdrawn from public GitHub Releases in favor of 0.2.1: direct authoritative
+DNS verification cannot work on some restricted network paths. The Git tag is
+retained for traceability; use 0.2.1 with an explicitly selected propagation mode.
 
 ### Added
 
@@ -27,6 +43,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 - Correct the README Cloud URL and provider filename casing; declare Netcup record storage for PHP 8.4/8.5.
 
 ## [0.1.1] - 2026-09-09
+
+Withdrawn from public GitHub Releases in favor of 0.2.1, which includes subsequent
+journal, propagation and diagnostic fixes. The Git tag is retained for traceability.
 
 ### Changed
 

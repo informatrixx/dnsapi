@@ -16,6 +16,8 @@
 	function dnsapiSettings(array $config): array {
 		$settings = $config['certbot'] ?? array();
 		if(!is_array($settings)) throw new RuntimeException('CONFIG_CERTBOT_INVALID');
+		$settings += array('propagation_mode' => 'strict');
+		if(!in_array($settings['propagation_mode'], array('strict', 'recursive'), true)) throw new RuntimeException('CONFIG_PROPAGATION_MODE_INVALID');
 		$settings += array('propagation_timeout_seconds' => 1200, 'dns_timeout_seconds' => 3, 'poll_interval_seconds' => 10, 'discovery_resolver' => '1.1.1.1', 'resolvers' => array('1.1.1.1', '8.8.8.8', '9.9.9.9'));
 		foreach(array('propagation_timeout_seconds' => 7200, 'dns_timeout_seconds' => 30, 'poll_interval_seconds' => 300) as $name => $max)
 			if(!is_int($settings[$name]) || $settings[$name] < 1 || $settings[$name] > $max) throw new RuntimeException('CONFIG_TIME_LIMIT_INVALID');
@@ -156,10 +158,10 @@
 				if(!array_key_exists($data['key'], $records)) $records[$data['key']] = $data['api']->getRecords();
 				$record = is_array($records[$data['key']]) ? dnsapiFindChallenge($records[$data['key']], $data['zone'], $identifier, $entry['CERTBOT_VALIDATION']) : null;
 				$active = $record !== null && ($record['state'] === null || $record['state'] === 'yes');
-				$servers[$data['zone']] ??= $dns->authorities($data['zone']);
+				$servers[$data['zone']] ??= $settings['propagation_mode'] === 'strict' ? $dns->authorities($data['zone']) : array();
 				$result = $dns->check('_acme-challenge.' . $identifier, $entry['CERTBOT_VALIDATION'], $servers[$data['zone']]);
 				foreach($result['results'] as $diagnostic)
-					fwrite(STDERR, json_encode(array('event' => 'PROPAGATION', 'identifier' => $identifier, 'provider_active' => $active, 'remaining_seconds' => (int)$deadline->remaining()) + $diagnostic, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+					fwrite(STDERR, json_encode(array('event' => 'PROPAGATION', 'mode' => $settings['propagation_mode'], 'identifier' => $identifier, 'provider_active' => $active, 'remaining_seconds' => (int)$deadline->remaining()) + $diagnostic, JSON_UNESCAPED_SLASHES) . PHP_EOL);
 				$all = $all && $active && $result['success'];
 			}
 			if($all) return;

@@ -109,6 +109,11 @@ Werte gesammelt gegen die autoritativen Nameserver und die konfigurierten
 die Vorgangskennung für den Cleanup. Details, Konfiguration und Recovery:
 [Certbot-Betrieb](docs/certbot.md).
 
+Standardmäßig gilt `certbot.propagation_mode: "strict"`. Für eingeschränkte
+DNS-Netze kann ausdrücklich `"recursive"` gewählt werden: Dann prüfen die Hooks
+den Providerbestand und die exakten Challengewerte bei allen konfigurierten
+Resolvern ohne direkte Autoritätsabfragen. Es gibt keinen automatischen Fallback.
+
 TLSA automatisch nach erfolgreicher Erneuerung:
 
 ```bash
