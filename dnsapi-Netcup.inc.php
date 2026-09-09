@@ -1,4 +1,5 @@
 <?php
+	require_once __DIR__ . '/dnsapi-runtime.inc.php';
 	class netcupAPI implements DNSAPIv1{
 
 		private $pZoneID;
@@ -8,6 +9,7 @@
 		private $pSessionID = null;
 
 		public $lastError = null;
+		public $records = array();
 
 		function __construct(string $zoneID, array $APIConfig)
 		{
@@ -30,7 +32,7 @@
 
 		function __destruct()
 		{
-				$this->logout();
+				try { $this->logout(); } catch(Throwable $error) { /* Expired hook budget: session expires server-side. */ }
 			}
 
 			private function normalizeName(?string $name)
@@ -148,7 +150,7 @@
             $aCURLBody = json_encode($aJSONData);
             curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-            $aCURLResponse = curl_exec($this->pCURL);
+            $aCURLResponse = dnsapiCurlExec($this->pCURL);
 
             if(curl_errno($this->pCURL))
             {
@@ -184,7 +186,7 @@
             $aCURLBody = json_encode($aJSONData);
             curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-            $aCURLResponse = curl_exec($this->pCURL);
+            $aCURLResponse = dnsapiCurlExec($this->pCURL);
 
             if(curl_errno($this->pCURL))
             {
@@ -218,7 +220,7 @@
 
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 
 				$aResponseData = json_decode(json: $aCURLResponse, associative: true);
 				if(!is_array($aResponseData))
@@ -309,7 +311,7 @@
 
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 
 				$aResponseData = json_decode(json: $aCURLResponse, associative: true);
 				if(!is_array($aResponseData))
@@ -343,7 +345,7 @@
 			$aCURLBody = json_encode($aJSONData);
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 
 				$aResponseData = json_decode(json: $aCURLResponse, associative: true);
 

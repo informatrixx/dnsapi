@@ -51,3 +51,6 @@ jobs:
               exit 1
             fi
           done < <(git ls-files '*.php')
+
+      - name: Run offline behavior tests
+        run: php -d error_reporting=E_ALL tests/hooks.php

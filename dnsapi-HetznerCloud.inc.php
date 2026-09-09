@@ -1,4 +1,5 @@
 <?php
+	require_once __DIR__ . '/dnsapi-runtime.inc.php';
 	class hetznerCloudAPI implements DNSAPIv1{
 
 		private $pZoneID;
@@ -171,10 +172,10 @@
 			curl_setopt($this->pCURL, CURLOPT_POST, $method == 'POST' ? 1 : 0);
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $body !== null ? $aPayload : '');
 
-			$aResponse = curl_exec($this->pCURL);
+			$aResponse = dnsapiCurlExec($this->pCURL);
 			if($aResponse === false)
 			{
-				$this->lastError = 'Fehler beim API Aufruf: ' . curl_error($this->pCURL);
+				$this->lastError = 'Fehler beim API Aufruf: cURL ' . curl_errno($this->pCURL);
 				return false;
 			}
 
@@ -195,13 +196,7 @@
 
 		private function setLastErrorFromResponse(array $response, string $defaultMessage)
 		{
-			if(isset($response['body']['error']['message']) && is_string($response['body']['error']['message']))
-			{
-				$aErrorCode = isset($response['body']['error']['code']) && is_string($response['body']['error']['code']) ? $response['body']['error']['code'] . ' ' : '';
-				$this->lastError = $defaultMessage . ': ' . $response['status'] . ' ' . $aErrorCode . $response['body']['error']['message'];
-			}
-			else
-				$this->lastError = $defaultMessage . ': ' . $response['status'] . ' ' . trim($response['raw']);
+			$this->lastError = $defaultMessage . ': HTTP ' . (int)$response['status'];
 		}
 
 		private function waitForAction(int $actionID, int $timeoutSeconds = 60)
@@ -224,14 +219,11 @@
 
 				if(($aAction['status'] ?? null) == 'error')
 				{
-					if(isset($aAction['error']['message']) && is_string($aAction['error']['message']))
-						$this->lastError = 'Hetzner Action fehlgeschlagen: ' . $aAction['error']['message'];
-					else
-						$this->lastError = 'Hetzner Action fehlgeschlagen.';
+					$this->lastError = 'Hetzner Action fehlgeschlagen.';
 					return false;
 				}
 
-				usleep(500000);
+				dnsapiPause(0.5);
 			}
 			while(time() <= $aDeadline);
 
@@ -559,8 +551,18 @@
 
 		function deleteRecord(?string $name = null, ?string $type = null, ?string $id = null, ?array $record = null, ?string $value = null)
 		{
+			if($value === null && is_string($record['value'] ?? null)) $value = $record['value'];
+			if(is_string($value)) {
+				if($id === null && !isset($record['id']) && ($name ?? $record['name'] ?? null) === null) {
+					$this->lastError = 'Fehler: Record Identifikation fehlt.';
+					return false;
+				}
+				$freshRecords = $this->getRecords();
+				if(!is_array($freshRecords)) return false;
+				$this->records = $freshRecords;
+			}
 			if(($id = $this->findRecord(name: $name, type: $type, id: $id, record: $record)) === false)
-				return false;
+				return is_string($value);
 
 			$aRRset = $this->records[$id];
 			$aName = $aRRset['name'];
@@ -579,8 +581,8 @@
 				$aDeleteRecord = $this->findRRSetRecord($aRRset, $aType, $value);
 				if($aDeleteRecord === false)
 				{
-					$this->lastError = 'Fehler: Record zum Loeschen nicht gefunden.';
-					return false;
+					$this->lastError = null;
+					return true;
 				}
 
 				if(!$this->removeRRSetRecords($aName, $aType, array($aDeleteRecord)))

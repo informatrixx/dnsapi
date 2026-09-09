@@ -16,6 +16,8 @@ Support PHP 8.4 and 8.5 with cURL. Run `php -d error_reporting=E_ALL -l file.php
 
 Do not perform DNS writes from CI. Do not include `/etc/dnsapi/config.json`, local `config.json`, API tokens, journal files, or Certbot runtime data in commits.
 
+Run `php8.4 tests/hooks.php` and `php8.5 tests/hooks.php` for DNS, journal, and hook changes. These tests use synthetic DNS/provider responses and temporary local files; the deadline test uses only a loopback HTTP socket. No real DNS writes or API credentials are needed. Record live staging/renewal verification separately.
+
 ## Releases
 
 Update `VERSION` and `CHANGELOG.md` together. Use a SemVer tag with a `v` prefix, such as `v0.1.0`. The release workflow checks that the tag exactly matches `VERSION` before publishing an archive.

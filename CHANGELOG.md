@@ -6,6 +6,26 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-09-09
+
+### Added
+
+- Structured DNS diagnostics and read-only `dnsapi-doctor.php`, explicit discovery resolver, authoritative AA checks and bounded TCP fallback.
+- Atomic version-2 journal with stable locking, pre-mutation intents, operation/run IDs and explicit `dnsapi-recovery.php` plan/apply commands.
+- Offline DNS, journal, cleanup and hook subprocess tests for PHP 8.4 and 8.5.
+
+### Changed
+
+- Certbot hooks share configuration, DNS and journal helpers; install the complete source tree when upgrading.
+- Propagation uses a monotonic deadline including provider/DNS calls. Cleanup has a separate 60-second budget.
+- CNAME/delegated challenges and overlapping runs for the same identifier are rejected before writes. Legacy journal ownership requires explicit recovery adoption.
+
+### Fixed
+
+- Preserve malformed journal data, reject unsafe cleanup without a value, and treat confirmed absent values as already cleaned up.
+- Keep provider response bodies out of Cloud errors and challenge values out of hook diagnostics.
+- Correct the README Cloud URL and provider filename casing; declare Netcup record storage for PHP 8.4/8.5.
+
 ## [0.1.1] - 2026-09-09
 
 ### Changed

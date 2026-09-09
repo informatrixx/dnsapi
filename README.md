@@ -50,8 +50,8 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 ```json
 {
   "API": {
-    "hetznerCloud": { "recordsURL": "https://dns.hetzner.com/api/v1/records", "APIToken": "..." },
-    "netcup": {
+    "HetznerCloud": { "recordsURL": "https://api.hetzner.cloud/v1/zones", "APIToken": "..." },
+    "Netcup": {
       "endpointURL": "https://ccp.netcup.net/run/webservice/servers/endpoint.php?JSON",
       "KundenNR": "...",
       "APIKey": "...",
@@ -59,8 +59,8 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
     }
   },
   "domains": {
-    "example.com": { "zoneID": "989221", "API": "hetznerCloud" },
-    "example.net": { "zoneID": "example.net", "API": "netcup" }
+    "example.com": { "zoneID": "989221", "API": "HetznerCloud" },
+    "example.net": { "zoneID": "example.net", "API": "Netcup" }
   },
   "tlsa-records": {
     "/etc/letsencrypt/live/example": {
@@ -72,7 +72,7 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 ```
 
 - `domains`: Suffix-basierte Domainauflösung für Hooks und CLI.
-- `API`: Adapter-Name muss exakt zu `dnsapi-<Name>.inc.php` passen, z. B. `hetznerCloud`.
+- `API`: Adapter-Name muss exakt zu `dnsapi-<Name>.inc.php` passen: `Hetzner`, `HetznerCloud` oder `Netcup`. Die Auth-/Cleanup-Hooks akzeptieren auch bestehende Alias-Schreibweisen.
 - `zoneID`: Für Netcup i. d. R. Zonennamen, für H-Cloud typischerweise Zone-Identifier.
 
 ## Bedienung CLI
@@ -101,9 +101,13 @@ certbot renew \
   --preferred-challenges dns \
   --manual-auth-hook /var/lib/dnsapi/certbot-dnsapi-authenticator.php \
   --manual-cleanup-hook /var/lib/dnsapi/certbot-dnsapi-cleanup.php
-
-Der Authenticator prüft die TXT-Einträge anschließend zentral und wiederholt die `dig`-Abfragen bis zu `60 * 30` Sekunden (netcup-freundlicher Ablauf).
 ```
+
+Die Hooks erstellen zuerst alle Challenges. Der letzte Auth-Hook prüft alle
+Werte gesammelt gegen die autoritativen Nameserver und die konfigurierten
+öffentlichen Resolver. Diagnoseausgaben gehen nach stderr; stdout enthält nur
+die Vorgangskennung für den Cleanup. Details, Konfiguration und Recovery:
+[Certbot-Betrieb](docs/certbot.md).
 
 TLSA automatisch nach erfolgreicher Erneuerung:
 
@@ -136,6 +140,13 @@ for f in $(git ls-files '*.php'); do php -d error_reporting=E_ALL -l "$f"; done
 
 CI prüft PHP 8.4 und 8.5. Lokal lässt sich derselbe Check mit `php8.4` und
 `php8.5` statt `php` für beide installierten Versionen ausführen.
+
+Offline-Verhaltenstests ohne Providerzugriffe:
+
+```bash
+php8.4 tests/hooks.php
+php8.5 tests/hooks.php
+```
 
 ## Versionierung
 

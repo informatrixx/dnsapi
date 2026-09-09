@@ -1,4 +1,5 @@
 <?php
+	require_once __DIR__ . '/dnsapi-runtime.inc.php';
 	class hetznerAPI implements DNSAPIv1{
 		
 		private $pZoneID;
@@ -99,7 +100,7 @@
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 			
 			
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
@@ -122,7 +123,7 @@
 			curl_setopt($this->pCURL, CURLOPT_URL, "{$this->pAPIConfig['recordsURL']}/$id");
 			curl_setopt($this->pCURL, CURLOPT_CUSTOMREQUEST, 'DELETE');
 			
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
 				$this->lastError = 'Fehler beim Löschen der DNS TXT records: "' . curl_error($this->pCURL) . " $aCURLResponse";
@@ -138,7 +139,7 @@
 			curl_setopt($this->pCURL, CURLOPT_HTTPHEADER, ['Auth-API-Token: ' . $this->pAPIConfig['APIToken']]);
 			curl_setopt($this->pCURL, CURLOPT_CUSTOMREQUEST, 'GET');
 			curl_setopt($this->pCURL, CURLOPT_URL, "{$this->pAPIConfig['recordsURL']}?zone_id={$this->pZoneID}");
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
@@ -181,7 +182,7 @@
 			curl_setopt($this->pCURL, CURLOPT_POST, 1);
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
@@ -251,7 +252,7 @@
 			curl_setopt($this->pCURL, CURLOPT_POST, 1);
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
 			
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
@@ -300,7 +301,7 @@
 			curl_setopt($this->pCURL, CURLOPT_POST, 1);
 			$aCURLBody = json_encode(value: $aUpdateRecord);
 			curl_setopt($this->pCURL, CURLOPT_POSTFIELDS, $aCURLBody);
-			$aCURLResponse = curl_exec($this->pCURL);
+			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 			
 			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
