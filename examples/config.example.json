@@ -1,0 +1,33 @@
+{
+  "API": {
+    "HetznerCloud": {
+      "recordsURL": "https://api.hetzner.cloud/v1/zones",
+      "APIToken": "REPLACE_WITH_SCOPED_TOKEN"
+    },
+    "Netcup": {
+      "endpointURL": "https://ccp.netcup.net/run/webservice/servers/endpoint.php?JSON",
+      "KundenNR": "REPLACE_WITH_CUSTOMER_NUMBER",
+      "APIKey": "REPLACE_WITH_API_KEY",
+      "APIPass": "REPLACE_WITH_API_PASSWORD"
+    }
+  },
+  "domains": {
+    "example.com": { "API": "HetznerCloud", "zoneID": "123456" },
+    "example.net": {
+      "API": "Netcup",
+      "zoneID": "example.net",
+      "dynDNS": { "secret": "REPLACE_WITH_RANDOM_SECRET", "allowed": ["home"] }
+    }
+  },
+  "certbot": {
+    "propagation_mode": "strict",
+    "propagation_timeout_seconds": 1200,
+    "dns_timeout_seconds": 3,
+    "poll_interval_seconds": 10,
+    "discovery_resolver": "1.1.1.1",
+    "resolvers": ["1.1.1.1", "8.8.8.8", "9.9.9.9"]
+  },
+  "tlsa-records": {
+    "/etc/letsencrypt/live/example.com": { "mail.example.com": [25, 465, 993] }
+  }
+}
