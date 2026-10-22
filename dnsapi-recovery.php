@@ -1,10 +1,14 @@
 #!/usr/bin/php
 <?php
 	require_once __DIR__ . '/dnsapi-certbot.inc.php';
+	require_once __DIR__ . '/src/Cli/Arguments.php';
 	try {
-		$options = getopt('', array('run:', 'apply', 'adopt-legacy'));
-		$journal = new DNSAPIJournal(dnsapiEnv('DNSAPI_JOURNAL_FILE', '/var/cache/dnsapi/journal.json'));
+		$options = DNSAPIArguments::options($argv, '', array('run:', 'apply', 'adopt-legacy', 'help'));
+		if(isset($options['help'])) { echo "dnsapi-recovery.php [--run RUN_ID] [--apply] [--adopt-legacy]\nDefault: local recovery plan only. Stop the associated Certbot run before --apply.\n"; exit(0); }
 		$run = $options['run'] ?? null;
+		if(isset($options['apply']) && (!is_string($run) || $run === '')) throw new RuntimeException('RECOVERY_RUN_REQUIRED');
+		if(isset($options['adopt-legacy']) && (!isset($options['apply']) || $run !== 'legacy')) throw new RuntimeException('RECOVERY_LEGACY_SELECTION_REQUIRED');
+		$journal = new DNSAPIJournal(dnsapiEnv('DNSAPI_JOURNAL_FILE', '/var/cache/dnsapi/journal.json'));
 		$ids = array();
 		foreach($journal->data['journal'] as $id => $entry) {
 			$entryRun = is_array($entry) ? ($entry['run'] ?? 'legacy') : 'invalid';

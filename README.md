@@ -11,16 +11,24 @@
 
 - PHP 8.4 oder 8.5 mit cURL (CLI; für den HTTP-Endpunkt zusätzlich PHP-FPM/Apache mit einer dieser Versionen)
 - `dig` im PATH (für TXT-Propagation-Prüfung)
-- `openssl` im PATH (für TLSA-Hash)
+- PHP-OpenSSL-Erweiterung (für TLSA-Hash; keine Shell-Pipeline erforderlich)
 - Laufzeit-Config unter `/etc/dnsapi/config.json` (nicht ins Repo einchecken)
 
 ## Installation und Berechtigungen
 
 ```bash
-git clone <repo>
+git clone https://github.com/informatrixx/dnsapi.git
 cd dnsapi
-chmod +x *.php
 ```
+
+CLI und Hooks sind im Release-Archiv bereits ausführbar; Include-Dateien bleiben
+nicht ausführbar. Der Stand `0.3.0-rc.1` ist eine Vorabversion zur Abnahme,
+keine stabile Produktionsfreigabe.
+
+Immer den vollständigen Quellbaum einschließlich `src/` installieren. Die Dateien
+im Projektstamm bleiben kompatible Einstiegspunkte, die Implementierung liegt in
+`src/Provider`, `src/Dns`, `src/Certbot`, `src/Tlsa`, `src/Cli` und `src/Runtime`.
+Upgrade, Sicherheitsgrenzen und Release-Ablauf: [Betrieb](docs/operations.md).
 
 Erforderliche Runtime-Pfade:
 
@@ -46,6 +54,13 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 ## Konfiguration
 
 `/etc/dnsapi/config.json` enthält Provider- und Domain-Mapping in diesem Muster:
+
+Eine vollständige Vorlage ohne Zugangsdaten liegt in
+[`examples/config.example.json`](examples/config.example.json). Prüfung ohne Netzwerkzugriff:
+
+```bash
+DNSAPI_CONFIG_FILE=/etc/dnsapi/config.json ./dnsapi-interface.php --config-check
+```
 
 ```json
 {
@@ -82,6 +97,8 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 ./dnsapi-interface.php -x example.com -pTXT
 ./dnsapi-interface.php -x example.com -s _acme-challenge.example.com:TXT=token:120
 ./dnsapi-interface.php -x example.com -d test.example.com:TXT
+./dnsapi-interface.php -x example.com --action=set --name=mail --type=AAAA --value=2001:db8::1 --ttl=600 --dry-run
+./dnsapi-interface.php -x example.com --set=@:TXT --value='v=spf1 include:example.net -all' --dry-run
 ```
 
 - `-x` / `--domain`: Zone auswählen.
@@ -90,6 +107,17 @@ wird die PHP-Version separat über den FPM-Pool bzw. das Apache-Modul bestimmt.
 - `-d`: Löschen.
 - `-p[TYPE]`: Listet Records (optional gefiltert).
 - `-h`: Hilfe.
+- `--dry-run`: Providerbestand lesen und Vorher-/Nachher-Plan zeigen, ohne DNS-Schreibzugriff.
+- `--json`: JSON-Ausgabe; Fehler liefern Exitcode 1 und einen Fehlercode auf stderr.
+- `--replace-rrset`: Den gesamten Recordsatz ausdrücklich ersetzen oder löschen.
+
+`-c` ergänzt einen Wert; `-d name:TXT=wert` entfernt gezielt diesen Wert. Ein
+mehrdeutiges Setzen/Ändern wird abgelehnt. Vor einem kompletten RRSet-Ersatz immer
+mit `--dry-run` prüfen. Wiederholte Aktionen auf denselben Recordsatz müssen in
+separaten Aufrufen erfolgen. Batch-Ausführungen sind nicht zonenübergreifend atomar.
+Für IPv6 und komplexe TXT-Werte `--value` und `--ttl` getrennt verwenden. Die alte
+TTL-Kurzschreibweise bleibt für einfache Werte erhalten. Netcup Legacy verwendet
+Zonen-TTL: eine Record-TTL wird nicht zugesichert und ausdrücklich als unverändert gemeldet.
 
 Weitere Hinweise zu Flows und Formaten stehen in `./dnsapi-interface.php -h`.
 
@@ -125,6 +153,11 @@ Die Hooks verwenden intern ein gemeinsames Journaling unter `/var/cache/dnsapi/j
 
 TLSA ist in `tlsa-records` nach `RENEWED_LINEAGE` organisiert. Der Platzhalter `%` gilt für alle Domains der aktiven Erneuerung.
 
+TLSA veröffentlicht standardmäßig **zusätzliche** Schlüsselwerte und erhält alte
+Werte. Wildcards werden beim `%`-Platzhalter übersprungen; konkrete Dienstnamen
+explizit konfigurieren. Alte Schlüsselwerte nur nach kontrollierter Rotation
+entfernen. [TLSA-Rotation und Wartezeiten](docs/tlsa.md).
+
 ## DynDNS HTTP-Endpunkt
 
 `index.php` reagiert auf Requests wie:
@@ -134,6 +167,21 @@ curl "https://example.com/?host=mail&secret=...&domain=example.com&ip=203.0.113.
 ```
 
 Die Domain muss als DynDNS-Host in der Konfiguration freigeschaltet sein.
+
+IPv6 erzeugt AAAA statt A. Der Cache ist nach Provider, Zone, Host und Typ getrennt
+und liegt atomar gespeichert in `dyn-cache-v2.json`. Leere oder abgewiesene Requests
+verändern ihn nicht. DynDNS-Secrets in Webserver- und Proxy-Logs redigieren.
+
+## Lesender Mail-DNS-Check
+
+```bash
+./dnsapi-check.php --domain example.com --dkim-selector default --mail-host mail.example.com
+```
+
+Prüft DNS-Bestand für MX, SPF, DKIM, DMARC, MTA-STS und TLSA sowie das DNSSEC-AD-Signal
+des gewählten Resolvers. Kein Providerzugriff und keine Zugangsdaten erforderlich.
+Exitcode 2 bedeutet fehlende, ungeprüfte oder auffällige Befunde. Das ist kein
+vollständiger SPF-/DANE-/HTTPS-Validator. [Grenzen und Architektur](docs/architecture.md).
 
 ## Entwicklung
 
@@ -153,6 +201,21 @@ php8.4 tests/hooks.php
 php8.5 tests/hooks.php
 ```
 
+Alle Syntax-, Hook-, Produkt-, Paketformat- und lokalen HTTP-Vertragstests:
+
+```bash
+php8.4 tools/verify.php
+php8.5 tools/verify.php
+```
+
+Tests verwenden ausschließlich synthetische Daten, temporäre Dateien und Loopback.
+CI erstellt zusätzlich ein Archiv und prüft genau dieses unter beiden PHP-Versionen,
+einschließlich Upgrade und Rollback mit v0.2.1. Nur diese geprüften Bytes werden
+später veröffentlicht. Anleitung: [Release-Abnahme](docs/release-acceptance.md).
+
 ## Versionierung
 
-`VERSION` verwendet SemVer, z. B. `0.1.0`. Release-Tags folgen `v<version>`.
+`VERSION` verwendet `X.Y.Z` oder `X.Y.Z-rc.N`, beispielsweise `0.3.0-rc.1`.
+Release-Tags folgen `v<version>`. RCs sind ausdrücklich als Prerelease markiert
+und ersetzen nicht die neueste stabile Version. Vor `0.3.0` sind erfolgreiche
+Hetzner-Cloud- und Netcup-Abnahmen erforderlich.

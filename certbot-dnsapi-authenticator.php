@@ -20,8 +20,13 @@
 		$batch = $journal->data['batches'][$owner] ?? null;
 		if(is_array($batch) && $batch['remaining'] > 0) {
 			if($remaining !== $batch['remaining'] - 1) throw new RuntimeException('CHALLENGE_SEQUENCE_CONFLICT');
+			if(!is_int($batch['expected'] ?? null)) throw new RuntimeException('CHALLENGE_BATCH_INCOMPLETE');
+			dnsapiBatchEntries($journal->data['journal'], $batch['run'], $batch['expected'] - $batch['remaining']);
+			$expected = $batch['expected'];
 			$run = $batch['run'];
 		} else {
+			if($remaining >= PHP_INT_MAX) throw new RuntimeException('CERTBOT_ENV_INVALID');
+			$expected = $remaining + 1;
 			$run = bin2hex(random_bytes(16));
 		}
 		foreach($journal->data['journal'] as $entry) {
@@ -38,14 +43,15 @@
 		if(!is_array($records)) throw new RuntimeException('PROVIDER_READ_FAILED');
 		if($settings['propagation_mode'] === 'recursive') DNSAPIDNS::providerPreflight($records, $data['zone'], '_acme-challenge.' . $identifier);
 		$existing = dnsapiFindChallenge($records, $data['zone'], $identifier, $validation);
+		$ttl = dnsapiChallengeTTL($records, $data['zone'], $identifier);
 		$id = bin2hex(random_bytes(16));
 		$entry = array('run' => $run, 'owned' => $existing === null, 'phase' => 'prepared', 'provider_key' => $data['key'], 'zone' => $data['zone'],
 			'CERTBOT_IDENTIFIER' => $identifier, 'CERTBOT_VALIDATION' => $validation,
 			'created_at' => time(), 'record' => array('name' => '_acme-challenge.' . $identifier . '.', 'type' => 'TXT', 'value' => $validation));
 		$journal->data['journal'][$id] = $entry;
-		$journal->data['batches'][$owner] = array('run' => $run, 'remaining' => $remaining);
+		$journal->data['batches'][$owner] = array('run' => $run, 'remaining' => $remaining, 'expected' => $expected);
 		$journal->save();
-		$record = $existing ?? $data['api']->createRecord(name: $entry['record']['name'], type: 'TXT', value: $validation, ttl: 120);
+		$record = $existing ?? $data['api']->createRecord(name: $entry['record']['name'], type: 'TXT', value: $validation, ttl: $ttl);
 		if(!is_array($record)) throw new RuntimeException('PROVIDER_CREATE_FAILED');
 		$journal->data['journal'][$id]['phase'] = 'created';
 		// Retain the exact intended value independently of provider response formatting.
@@ -53,7 +59,7 @@
 		$journal->save();
 		echo $id . PHP_EOL;
 		if($remaining === 0) {
-			$entries = array_filter($journal->data['journal'], fn($entry) => is_array($entry) && ($entry['run'] ?? '') === $run);
+			$entries = dnsapiBatchEntries($journal->data['journal'], $run, $expected);
 			dnsapiWait($config, $entries, $GLOBALS['dnsapiDeadline']);
 		}
 	} catch(Throwable $error) {

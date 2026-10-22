@@ -38,6 +38,42 @@
 		check($plan['exit'] === 0 && count(json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true)) === 1, 'recovery plan does not delete');
 		$recover = hookProcess('dnsapi-recovery.php', $environment, array('--run=' . $entry['run'], '--apply'));
 		check($recover['exit'] === 0 && !json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'recovery removes exact intent after crash');
+		$first = hookProcess('certbot-dnsapi-authenticator.php', $environment);
+		$originalJournal = file_get_contents($environment['DNSAPI_JOURNAL_FILE']);
+		$originalRecords = file_get_contents($environment['DNSAPI_FIXTURE_STATE']);
+		$batchJournal = json_decode($originalJournal, true);
+		$batchJournal['journal'] = array();
+		file_put_contents($environment['DNSAPI_JOURNAL_FILE'], json_encode($batchJournal));
+		$missing = hookProcess('certbot-dnsapi-authenticator.php', $secondEnv);
+		check($missing['exit'] === 1 && str_contains($missing['error'], 'CHALLENGE_BATCH_INCOMPLETE') && file_get_contents($environment['DNSAPI_FIXTURE_STATE']) === $originalRecords, 'missing earlier challenge cannot produce successful final verification or a new write');
+		file_put_contents($environment['DNSAPI_JOURNAL_FILE'], $originalJournal);
+		$batchJournal = json_decode($originalJournal, true);
+		$entry = reset($batchJournal['journal']);
+		$typo = hookProcess('dnsapi-recovery.php', $environment, array('--run=' . $entry['run'], '--apply', '--dry-run'));
+		check($typo['exit'] === 1 && file_get_contents($environment['DNSAPI_FIXTURE_STATE']) === $originalRecords && file_get_contents($environment['DNSAPI_JOURNAL_FILE']) === $originalJournal, 'unknown recovery option fails before journal or provider writes');
+		$recover = hookProcess('dnsapi-recovery.php', $environment, array('--run=' . $entry['run'], '--apply'));
+		check($recover['exit'] === 0, 'recover intact batch after incomplete-state test');
+		foreach(array(600, null) as $ttl) {
+			$foreign = array('foreign' => array('id' => '_acme-challenge/TXT', 'name' => '_acme-challenge', 'type' => 'TXT', 'ttl' => $ttl, 'records' => array(array('value' => '"foreign-token"'))));
+			file_put_contents($environment['DNSAPI_FIXTURE_STATE'], json_encode($foreign));
+			$auth = hookProcess('certbot-dnsapi-authenticator.php', array_replace($environment, array('CERTBOT_REMAINING_CHALLENGES' => '0')));
+			check($auth['exit'] === 0, 'hook preserves existing or inherited RRSet TTL: ' . $auth['error']);
+			$cleanup = hookProcess('certbot-dnsapi-cleanup.php', array_replace($environment, array('CERTBOT_AUTH_OUTPUT' => $auth['output'])));
+			check($cleanup['exit'] === 0 && json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true) === $foreign, 'TTL regression cleanup preserves foreign RRSet');
+		}
+		file_put_contents($environment['DNSAPI_FIXTURE_STATE'], '[]');
+		foreach(array('after-write', 'after-write-pending') as $failure) {
+			$failed = hookProcess('certbot-dnsapi-authenticator.php', array_replace($environment, array('CERTBOT_REMAINING_CHALLENGES' => '0', 'DNSAPI_FIXTURE_FAILURE' => $failure)));
+			$journal = json_decode(file_get_contents($environment['DNSAPI_JOURNAL_FILE']), true);
+			check($failed['exit'] === 1 && str_contains($failed['error'], 'PROVIDER_RESPONSE_INVALID'), 'provider write followed by response error never passes');
+			if($failure === 'after-write') check(!$journal['journal'] && !json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'post-write error reconciles and cleans its exact value');
+			else {
+				$entry = reset($journal['journal']);
+				check($entry['phase'] === 'prepared' && $entry['cleanup_failed'] === true, 'failed reconciliation retains prepared intent');
+				$recover = hookProcess('dnsapi-recovery.php', $environment, array('--run=' . $entry['run'], '--apply'));
+				check($recover['exit'] === 0 && !json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'later recovery reconciles the retained intent');
+			}
+		}
 		$config = json_decode(file_get_contents($environment['DNSAPI_CONFIG_FILE']), true);
 		$config['certbot']['propagation_mode'] = 'recursive';
 		file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($config));

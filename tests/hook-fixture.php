@@ -12,14 +12,18 @@
 			$prepared = array_filter($journal['journal'], fn($entry) => $entry['phase'] === 'prepared' && $entry['CERTBOT_VALIDATION'] === $value);
 			if(!$prepared) throw new RuntimeException('NO_PREPARED_INTENT');
 			$records = $this->getRecords();
+			foreach($records as $existing)
+				if(isset($existing['records']) && $existing['ttl'] !== $ttl) throw new RuntimeException('FIXTURE_TTL_CONFLICT');
 			$id = hash('sha256', $value);
-			$record = array('id' => $id, 'name' => $name, 'type' => $type, 'value' => $value);
+			$record = array('id' => $id, 'name' => $name, 'type' => $type, 'value' => $value, 'ttl' => $ttl);
 			$records[$id] = $record;
 			file_put_contents($this->path, json_encode($records));
 			if(getenv('DNSAPI_FIXTURE_FAILURE') === 'crash') exit(70);
+			if(in_array(getenv('DNSAPI_FIXTURE_FAILURE'), array('after-write', 'after-write-pending'), true)) throw new RuntimeException('PROVIDER_RESPONSE_INVALID');
 			return $record;
 		}
 		function deleteRecord($record = null, $value = null) {
+			if(getenv('DNSAPI_FIXTURE_FAILURE') === 'after-write-pending') return false;
 			if(!is_string($value) || $value === '') throw new RuntimeException('UNSAFE_DELETE');
 			$records = $this->getRecords();
 			unset($records[$record['id']]);
@@ -38,7 +42,8 @@
 		if($type === 'TXT') {
 			$api = new HookFixtureAPI();
 			foreach($api->getRecords() ?: array() as $record)
-				$answers .= "$name 120 IN TXT \"" . $record['value'] . "\"\n";
+				foreach($record['records'] ?? array(array('value' => $record['value'])) as $part)
+					$answers .= "$name 120 IN TXT \"" . trim($part['value'], '"') . "\"\n";
 		}
 		if($type === 'TXT' && getenv('DNSAPI_FIXTURE_FAILURE') === 'dns') $answers = '';
 		return array('output' => ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n;; flags: qr aa; QUERY: 1\n;; ANSWER SECTION:\n" . $answers, 'exit' => 0, 'duration_ms' => 1);

@@ -29,6 +29,9 @@
 	$result = DNSAPIDNS::parse($negative, $name, 'expected');
 	check($result['negative_ttl'] === 3400 && !$result['aa'] && $result['ra'], 'negative TTL and flags');
 	$settings = dnsapiSettings(array());
+	rejects(fn() => dnsapiWait(array(), array(), new DNSAPIDeadline(1)), 'empty verification never passes');
+	rejects(fn() => dnsapiWait(array(), array(array('CERTBOT_IDENTIFIER' => 'example.test', 'CERTBOT_VALIDATION' => '', 'phase' => 'created')), new DNSAPIDeadline(1)), 'empty expected TXT fails before DNS or provider access');
+	rejects(fn() => dnsapiWait(array(), array(array('CERTBOT_IDENTIFIER' => 'example.test', 'CERTBOT_VALIDATION' => 'token', 'phase' => 'prepared')), new DNSAPIDeadline(1)), 'unconfirmed operation never passes verification');
 	check($settings['propagation_mode'] === 'strict', 'strict mode remains default');
 	rejects(fn() => dnsapiSettings(array('certbot' => array('propagation_mode' => 'fallback'))), 'unknown mode rejected');
 	$recursive = array_replace($settings, array('propagation_mode' => 'recursive'));

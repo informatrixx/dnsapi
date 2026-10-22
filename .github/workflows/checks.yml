@@ -1,0 +1,114 @@
+name: Reusable checks
+on:
+  workflow_call:
+    inputs:
+      release:
+        type: boolean
+        default: false
+    outputs:
+      version:
+        value: ${{ jobs.package.outputs.version }}
+      prerelease:
+        value: ${{ jobs.package.outputs.prerelease }}
+permissions:
+  contents: read
+jobs:
+  php:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, openssl
+          coverage: none
+      - name: Reject runtime files
+        run: git ls-files | php tools/check-artifact.php
+      - name: Syntax and offline behavior
+        run: php tools/verify.php
+  package:
+    needs: php
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.package.outputs.version }}
+      prerelease: ${{ steps.package.outputs.prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.5'
+          coverage: none
+      - name: Build candidate and pinned rollback baseline once
+        id: package
+        env:
+          VALIDATE_RELEASE: ${{ inputs.release }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p dist baseline
+          if [[ "$VALIDATE_RELEASE" == true ]]; then
+            php tools/release-metadata.php --tag "$GITHUB_REF_NAME" > dist/metadata.json
+            git merge-base --is-ancestor HEAD origin/main
+          else
+            php tools/release-metadata.php > dist/metadata.json
+          fi
+          version="$(jq -r .version dist/metadata.json)"
+          prerelease="$(jq -r .prerelease dist/metadata.json)"
+          printf 'version=%s\nprerelease=%s\n' "$version" "$prerelease" >> "$GITHUB_OUTPUT"
+          git ls-files | php tools/check-artifact.php
+          git -c tar.umask=0022 archive --format=tar.gz --prefix="dnsapi-$version/" HEAD > "dist/dnsapi-$version.tar.gz"
+          baseline="$(php -r 'require "tools/release-lib.php"; echo DNSAPIRelease::BASELINE_COMMIT;')"
+          git -c tar.umask=0022 archive --format=tar.gz --prefix=dnsapi-0.2.1/ "$baseline" > baseline/dnsapi-0.2.1.tar.gz
+          cd dist
+          sha256sum "dnsapi-$version.tar.gz" metadata.json > SHA256SUMS
+      - uses: actions/upload-artifact@v4
+        with:
+          name: candidate-package
+          path: dist/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rollback-baseline
+          path: baseline/
+          if-no-files-found: error
+  archive:
+    needs: package
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        php: ['8.4', '8.5']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: ${{ matrix.php }}
+          extensions: curl, openssl, zlib
+          coverage: none
+      - uses: actions/download-artifact@v4
+        with:
+          name: candidate-package
+          path: dist
+      - uses: actions/download-artifact@v4
+        with:
+          name: rollback-baseline
+          path: baseline
+      - name: Test the exact archive, upgrade and rollback
+        env:
+          VERSION: ${{ needs.package.outputs.version }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          (cd dist && sha256sum --check SHA256SUMS)
+          php tools/verify-release.php --archive "dist/dnsapi-$VERSION.tar.gz" --version "$VERSION" --baseline-archive baseline/dnsapi-0.2.1.tar.gz 2>&1 | tee acceptance.txt
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: offline-acceptance-php-${{ matrix.php }}
+          path: acceptance.txt

@@ -1,8 +1,10 @@
 #!/usr/bin/php
 <?php
 	require_once __DIR__ . '/dnsapi-certbot.inc.php';
+	require_once __DIR__ . '/src/Cli/Arguments.php';
 	try {
-		$options = getopt('', array('domain:', 'zone:', 'authorities'));
+		$options = DNSAPIArguments::options($argv, '', array('domain:', 'zone:', 'authorities', 'help'));
+		if(isset($options['help'])) { echo "dnsapi-doctor.php --domain NAME [--zone NAME] [--authorities]\nDNS reads only; DNSAPI_EXPECTED_TXT optionally supplies the exact expected value.\n"; exit(0); }
 		$domain = dnsapiIdentifier($options['domain'] ?? '');
 		$zone = dnsapiIdentifier($options['zone'] ?? $domain);
 		$config = dnsapiConfig();

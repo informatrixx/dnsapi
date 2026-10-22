@@ -4,7 +4,35 @@ All notable changes to this project are documented here.
 
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and versions follow [Semantic Versioning](https://semver.org/).
 
-## [Unreleased]
+## [0.3.0-rc.1] - Unreleased
+
+Release candidate in preparation. Not a stable production release; live provider
+acceptance and publication are separate approvals.
+
+### Added
+
+- Shared runtime/configuration, provider contract, normalized record plans and replaceable HTTP transport under `src/`; legacy entry points remain available.
+- CLI JSON output, structured record arguments, read-only dry-run and offline configuration validation; credential-free example configuration.
+- Read-only mail DNS inventory and explicit TLSA publish/retire operations with a rollover runbook.
+- Product regressions and loopback HTTP contract tests; reusable PHP 8.4/8.5 checks for branches and release tags, runtime-artifact filtering and SHA256SUMS.
+- Exact-archive verification, pinned v0.2.1 upgrade/rollback tests and a provider staging acceptance runbook. CI tests one archive on both PHP versions and publishes the same bytes; RC tags are prereleases, never Latest.
+
+### Fixed
+
+- Refuse TLSA generation from missing or malformed certificates instead of hashing empty pipeline output.
+- Netcup upserts carry existing IDs, reject ambiguous targets and use the session ID for logout; bulk replacement preserves unrelated records.
+- Preserve IPv6/SPF values in CLI parsing and return nonzero errors; reject stale or ambiguous mutation plans.
+- Isolate DynDNS caches per provider/zone/name/type, authenticate before writes, validate IP addresses and atomically preserve cache data.
+- Correct release runtime-file filtering and prevent publication from a tag not integrated into `main`.
+- Preserve existing and inherited Hetzner Cloud challenge TTLs; reject incomplete challenge batches and unconfirmed record creation/deletion.
+- Fail closed on incomplete provider inventory; reject unknown Doctor/Recovery options before side effects and retain uncertain writes for reconciliation.
+
+### Changed
+
+- TLSA publication is additive; removal requires an exact old value and explicit rollover confirmation. Service activation and TTL waiting remain operator responsibilities.
+- Deploy the complete source tree including `src/`. All entry points accept `DNSAPI_CONFIG_FILE`; legacy Netcup TTL remains zone-level.
+- CLI print output is normalized. Ambiguous mutations and duplicate targets within a batch now fail explicitly instead of guessing.
+- Executable CLI/hooks carry executable file modes; includes do not. Interrupted batches from older versions require recovery rather than resuming across an upgrade.
 
 ## [0.2.1] - 2026-09-09
 

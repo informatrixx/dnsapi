@@ -4,13 +4,14 @@
 
 PHP 8.4/8.5 with cURL, `dig` (BIND), and Linux are supported. The executable
 shebang remains `/usr/bin/php`. Install the full repository, including the new
-`dnsapi-*.inc.php` helpers, in `/var/lib/dnsapi`; do not replace only the hooks.
+`dnsapi-*.inc.php` compatibility loaders and the complete `src/` directory, in
+`/var/lib/dnsapi`; do not replace only the hooks.
 Stop active Certbot/hook processes before upgrading: old processes do not use
-the new stable journal lock. No new PHP extension is required.
+the new stable journal lock. Auth/cleanup require no additional PHP extension;
+the TLSA hook requires PHP OpenSSL rather than a shell pipeline.
 
-The HTTP and TLSA tools keep their existing configuration paths. Auth, cleanup,
-doctor and recovery support `DNSAPI_CONFIG_FILE` (default
-`/etc/dnsapi/config.json`) and `DNSAPI_JOURNAL_FILE` (default
+All entry points, including HTTP, CLI and TLSA, support `DNSAPI_CONFIG_FILE` (default
+`/etc/dnsapi/config.json`). Auth, cleanup, doctor and recovery retain `DNSAPI_JOURNAL_FILE` (default
 `/var/cache/dnsapi/journal.json`). Give each independent instance its own journal.
 Use the same environment and operating-system user for auth, cleanup and recovery.
 New journal directories use 0700; files and the stable `.lock` file use 0600.
@@ -49,6 +50,11 @@ Certbot process identity is derived from its Linux `/proc` ancestry. If unavaila
 starting Certbot and preserve it across that invocation's hooks. Do not generate
 a separate ID inside each hook. Batches use Certbot's remaining-challenge counter,
 not the number of unique domains. Apex and wildcard values remain separate.
+New batches record the expected operation count and reject missing or unconfirmed
+entries before the next mutation or final verification. Interrupted older batches
+without that count require recovery; do not resume them across a code upgrade.
+Existing Cloud challenge RRSet TTLs are retained, including `null` (zone inheritance).
+Only new challenge RRSets request TTL 120; Netcup keeps its zone-level TTL.
 
 ## Verification and Diagnostics
 
