@@ -31,7 +31,7 @@
 	$writeCount = $api->writes;
 	$service->apply($service->plan('create', $second));
 	testAssert($api->writes === $writeCount, 'already present value is a no-op for every provider');
-	$id = array_key_first($api->records);
+	$id = (string)array_key_first($api->records);
 	testReject(fn() => $service->plan('update', array('id' => $id, 'name' => 'elsewhere', 'type' => 'TXT', 'value' => 'new')), 'RECORD_SELECTOR_MISMATCH');
 	testReject(fn() => $service->plan('delete', array('id' => $id, 'value' => 'second')), 'RECORD_SELECTOR_MISMATCH');
 	testReject(fn() => $service->plan('create', $second, true), 'ARGUMENT_CONFLICT');
@@ -42,6 +42,13 @@
 	$plan = $service->plan('set', $first, true);
 	$api->createRecord(record: array_replace($second, array('value' => 'concurrent')));
 	testReject(fn() => $service->apply($plan), 'RECORD_PLAN_STALE');
+	foreach(array('12345678', 'a1234567') as $providerID) {
+		$idAPI = new ProductMemoryProvider();
+		$idAPI->records = array($providerID => $first + array('id' => $providerID));
+		$idService = new DNSAPIRecords($idAPI, 'example.test');
+		testAssert($idService->snapshot()[0]['id'] === $providerID, 'inventory retains string identity for numeric and alphanumeric IDs');
+		testReject(fn() => $idService->plan('update', array('id' => $providerID, 'name' => 'elsewhere', 'type' => 'TXT', 'value' => 'new')), 'RECORD_SELECTOR_MISMATCH');
+	}
 	$directory = sys_get_temp_dir() . '/dnsapi-product-' . bin2hex(random_bytes(8));
 	mkdir($directory, 0700);
 	try {
