@@ -19,6 +19,25 @@ packaging, not an independent security certification or production approval.
 | Executable scripts lacked executable Git modes | Explicit CLI/hook modes; archive verification rejects wrong modes rather than repairing them |
 | Source checks alone did not verify the delivered package | Test unpacked archive on both PHP versions, including previous-version recovery |
 
+## PR Review Follow-up
+
+PR #4 identified three additional gaps after the initial review. Regression tests
+now exercise the actual adapters through the loopback HTTP fixture:
+
+- Legacy Hetzner rejects malformed JSON, missing/null/object-shaped record lists,
+  incomplete records and duplicate IDs. Cleanup retains the exact journal intent
+  until valid inventory confirms deletion; unrelated values survive recovery.
+- Shared TXT decoding is separate from Cloud serialization. Long contents are
+  split into at most 255 decoded octets per character-string, with quotes,
+  backslashes and non-ASCII octets escaped safely across chunk boundaries.
+- Cloud comparison uses decoded TXT contents, while exact removal sends the
+  original provider record. Multipart and decimal-escaped values, sibling records
+  and comments have explicit regression coverage.
+
+These corrections use synthetic provider state only. They do not replace the
+live acceptance gates below. TXT character-string and escape formats follow
+[RFC 1035](https://www.rfc-editor.org/rfc/rfc1035.html#section-3.3.14).
+
 ## Verification Boundary
 
 The source suites and archive verification use PHP 8.4/8.5, synthetic providers,

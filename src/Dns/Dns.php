@@ -1,4 +1,5 @@
 <?php
+	require_once __DIR__ . '/Txt.php';
 	require_once __DIR__ . '/../Runtime/Runtime.php';
 
 	class DNSAPIProcess {
@@ -68,11 +69,8 @@
 				if($type === 'CNAME') $result['cname'] = true;
 				if($owner !== strtolower(rtrim($name, '.'))) continue;
 				if($type === 'TXT') {
-					if(!preg_match('/^(?:"(?:[^"\\\\]|\\\\.)*"\s*)+$/', $value)) continue;
-					preg_match_all('/"((?:[^"\\\\]|\\\\.)*)"/', $value, $strings);
-					$value = '';
-					foreach($strings[1] as $string)
-						$value .= preg_replace_callback('/\\\\(\d{3}|.)/s', fn($m) => ctype_digit($m[1]) && strlen($m[1]) === 3 ? chr((int)$m[1]) : $m[1], $string);
+					if(!str_starts_with($value, '"')) continue;
+					try { $value = DNSAPITXT::value($value); } catch(RuntimeException $error) { continue; }
 					if($expected !== '' && $value === $expected) { $result['matched'] = true; $result['ttl'] = (int)$ttl; }
 				}
 				$result['records'][] = array('type' => $type, 'value' => $value);

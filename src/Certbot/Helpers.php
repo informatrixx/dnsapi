@@ -45,10 +45,7 @@
 			foreach($record['records'] ?? array(array('value' => $record['value'] ?? $record['destination'] ?? null)) as $part) {
 				if(!is_string($part['value'] ?? null)) continue;
 				$actual = $part['value'];
-				if(str_starts_with($actual, '"')) {
-					$parsed = DNSAPIDNS::parse(";; ANSWER SECTION:\n" . $name . '. 120 IN TXT ' . $actual, $name, $value);
-					if(!$parsed['matched']) continue;
-				} elseif($actual !== $value) continue;
+				if(DNSAPITXT::value($actual) !== $value) continue;
 				return array('id' => (string)$record['id'], 'name' => $record['name'] ?? $record['hostname'], 'type' => 'TXT', 'value' => $actual, 'state' => $record['state'] ?? null);
 			}
 		}

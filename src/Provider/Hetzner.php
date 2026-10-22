@@ -18,7 +18,7 @@
 			curl_setopt($this->pCURL, CURLOPT_TIMEOUT, 30);
 			curl_setopt($this->pCURL, CURLOPT_CONNECTTIMEOUT, 10);
 
-			$this->records = $this->getRecords();
+			$this->getRecords();
 		}
 
 		private function assignValues(array $record, ?string $id = null)
@@ -143,18 +143,39 @@
 			curl_setopt($this->pCURL, CURLOPT_URL, "{$this->pAPIConfig['recordsURL']}?zone_id={$this->pZoneID}");
 			$aCURLResponse = dnsapiCurlExec($this->pCURL);
 
-			if(curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
+			if($aCURLResponse === false || curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE) != '200')
 			{
 				$this->lastError = 'Fehler beim API Aufruf: ' . curl_getinfo($this->pCURL, CURLINFO_HTTP_CODE);
 				return false;
 			}
 
-			$aResponseRecords = json_decode(json: $aCURLResponse, associative: true)['records'];
+			try {
+				$aResponse = json_decode($aCURLResponse, false, 512, JSON_THROW_ON_ERROR);
+			} catch(JsonException $error) {
+				$this->lastError = 'PROVIDER_RESPONSE_INVALID';
+				return false;
+			}
+			if(!$aResponse instanceof stdClass || !is_array($aResponse->records ?? null)) {
+				$this->lastError = 'PROVIDER_RESPONSE_INVALID';
+				return false;
+			}
 			$aReturnRecords = array();
-			//Erhaltene DNS Records auswerten
-			//und als array key die recordID verwenden
-			foreach($aResponseRecords as $record)
+			foreach($aResponse->records as $record) {
+				if(!$record instanceof stdClass) { $this->lastError = 'PROVIDER_RECORD_INVALID'; return false; }
+				$record = get_object_vars($record);
+				if(!is_string($record['id'] ?? null) || $record['id'] === '' || isset($aReturnRecords[$record['id']])
+					|| !is_string($record['name'] ?? null) || $record['name'] === ''
+					|| !is_string($record['type'] ?? null) || !preg_match('/^[A-Z][A-Z0-9]*$/D', $record['type'])
+					|| !is_string($record['value'] ?? null)
+					|| (isset($record['ttl']) && (!is_int($record['ttl']) || $record['ttl'] < 1))
+					|| (array_key_exists('zone_id', $record) && $record['zone_id'] !== $this->pZoneID)) {
+					$this->lastError = 'PROVIDER_RECORD_INVALID';
+					return false;
+				}
 				$aReturnRecords[$record['id']] = $record;
+			}
+			$this->records = $aReturnRecords;
+			$this->lastError = null;
 			return $aReturnRecords;
 		}
 

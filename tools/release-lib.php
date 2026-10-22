@@ -92,6 +92,7 @@
 		static function layout(array $archive, string $version): void {
 			$root = $archive['root'];
 			$required = array_merge(self::EXECUTABLES, array('VERSION', 'CHANGELOG.md', 'README.md', 'LICENSE', 'index.php', 'src/bootstrap.php', 'src/Provider/ProviderInterface.php', 'src/Provider/Transport.php', 'src/Runtime/Config.php', 'src/Runtime/Runtime.php', 'src/Runtime/Journal.php', 'src/Runtime/DynDNS.php', 'src/Dns/Records.php', 'src/Dns/Dns.php', 'src/Dns/MailAudit.php', 'src/Certbot/Helpers.php', 'src/Tlsa/Tlsa.php', 'src/Cli/Arguments.php', 'tools/verify.php', 'tools/verify-release.php', 'tests/all.php', 'tests/upgrade.php', 'examples/config.example.json', 'docs/release-acceptance.md'));
+			$required[] = 'src/Dns/Txt.php';
 			foreach(array('Hetzner', 'HetznerCloud', 'Netcup') as $provider) {
 				$required[] = 'dnsapi-' . $provider . '.inc.php';
 				$required[] = 'src/Provider/' . $provider . '.php';

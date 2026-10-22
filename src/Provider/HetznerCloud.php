@@ -1,5 +1,6 @@
 <?php
 	require_once __DIR__ . '/../bootstrap.php';
+	require_once __DIR__ . '/../Dns/Txt.php';
 	class hetznerCloudAPI implements DNSAPIv1{
 
 		private $pZoneID;
@@ -82,14 +83,12 @@
 
 		private function normalizeRecordValue(string $type, string $value)
 		{
-			if($type != 'TXT')
-				return $value;
+			return $type === 'TXT' ? DNSAPITXT::serialize(DNSAPITXT::value($value)) : $value;
+		}
 
-			$aTrimmedValue = trim($value);
-			if($aTrimmedValue !== '' && preg_match('/^"(?:[^"\\\\]|\\\\.)*"(\s+"(?:[^"\\\\]|\\\\.)*")*$/', $aTrimmedValue))
-				return $aTrimmedValue;
-
-			return '"' . addcslashes($value, "\\\"") . '"';
+		private function recordValue(string $type, string $value): string
+		{
+			return $type === 'TXT' ? DNSAPITXT::value($value) : $value;
 		}
 
 		private function buildRecordPayload(string $type, ?string $value = null, ?array $record = null)
@@ -257,15 +256,15 @@
 		{
 			$aRecordMap = array();
 			foreach($rrset['records'] as $aRecord)
-				$aRecordMap[$aRecord['value']] = $aRecord;
+				$aRecordMap[$this->recordValue($rrset['type'], $aRecord['value'])] = $aRecord;
 			return $aRecordMap;
 		}
 
 		private function findRRSetRecord(array $rrset, string $type, string $value)
 		{
-			$aValue = $this->normalizeRecordValue($type, $value);
+			$aValue = $this->recordValue($type, $value);
 			foreach($rrset['records'] as $aRecord)
-				if($aRecord['value'] == $aValue)
+				if($this->recordValue($type, $aRecord['value']) === $aValue)
 					return $aRecord;
 
 			return false;
@@ -370,8 +369,9 @@
 
 			foreach($records as $aRecord)
 			{
-				if(!array_key_exists('comment', $aRecord) && isset($aExistingRecords[$aRecord['value']]['comment']))
-					$aRecord['comment'] = $aExistingRecords[$aRecord['value']]['comment'];
+				$aValue = $this->recordValue($rrset['type'], $aRecord['value']);
+				if(!array_key_exists('comment', $aRecord) && isset($aExistingRecords[$aValue]['comment']))
+					$aRecord['comment'] = $aExistingRecords[$aValue]['comment'];
 
 				$aMergedRecords[] = $aRecord;
 			}
@@ -384,7 +384,7 @@
 			$aCurrentRecords = $this->getRRSetRecordMap($rrset);
 			$aExpectedRecords = array();
 			foreach($records as $aRecord)
-				$aExpectedRecords[$aRecord['value']] = $aRecord;
+				$aExpectedRecords[$this->recordValue($rrset['type'], $aRecord['value'])] = $aRecord;
 
 			if(count($aCurrentRecords) != count($aExpectedRecords))
 				return false;
@@ -835,7 +835,7 @@
 				if(!$this->changeRRSetTTL($aName, $aType, $aTTL))
 					return false;
 
-			if($aTargetRecord['value'] == $aCurrentRecord['value'] && isset($record) && array_key_exists('comment', $record) && is_string($record['comment']))
+			if($this->recordValue($aType, $aTargetRecord['value']) === $this->recordValue($aType, $aCurrentRecord['value']) && isset($record) && array_key_exists('comment', $record) && is_string($record['comment']))
 			{
 				if(!$this->updateRRSetRecords($aName, $aType, array(
 					array(

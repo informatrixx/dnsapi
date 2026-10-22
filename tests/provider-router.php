@@ -11,6 +11,17 @@
 	};
 	if(isset($state['malformed'])) { file_put_contents($statePath, json_encode($state)); echo '{invalid'; return; }
 	if(isset($state['failure'])) { $respond(array('error' => 'private-fixture-value'), 503); return; }
+	if($path === '/legacy/records' && $_SERVER['REQUEST_METHOD'] === 'GET') {
+		if(isset($state['legacy_response'])) {
+			file_put_contents($statePath, json_encode($state));
+			header('Content-Type: application/json'); echo $state['legacy_response']; return;
+		}
+		$respond(array('records' => array_values($state['legacy']))); return;
+	}
+	if($_SERVER['REQUEST_METHOD'] === 'DELETE' && preg_match('~^/legacy/records/([^/]+)$~', $path, $matches)) {
+		unset($state['legacy'][$matches[1]]);
+		$respond(array()); return;
+	}
 	if($path === '/netcup') {
 		$action = $body['action'];
 		if($action === 'login') { $respond(array('status' => 'success', 'responsedata' => array('apisessionid' => 'fixture-session'))); return; }
@@ -50,6 +61,14 @@
 	}
 	if(preg_match('~^/zones/1/rrsets/([^/]+)/([^/]+)/actions/(add_records|remove_records|set_records|change_ttl|update_records)$~', $path, $matches)) {
 		[, $name, $type, $action] = $matches;
+		if($type === 'TXT') foreach($body['records'] ?? array() as $record) {
+			if(!preg_match('/^(?:"(?:[^"\\\\]|\\\\.)*"\s*)+$/D', $record['value'])) { $respond(array('error' => 'TXT_SYNTAX'), 400); return; }
+			preg_match_all('/"((?:[^"\\\\]|\\\\.)*)"/', $record['value'], $strings);
+			foreach($strings[1] as $string) {
+				$decoded = preg_replace_callback('/\\\\(\d{3}|.)/s', fn($m) => ctype_digit($m[1]) && strlen($m[1]) === 3 ? chr((int)$m[1]) : $m[1], $string);
+				if(strlen($decoded) > 255) { $respond(array('error' => 'TXT_STRING_TOO_LONG'), 400); return; }
+			}
+		}
 		$id = rawurldecode($name) . '/' . $type;
 		if(!isset($state['cloud'][$id]) && $action !== 'add_records') { $respond(array('error' => array('code' => 'not_found')), 404); return; }
 		$state['cloud'][$id] ??= array('id' => $id, 'name' => rawurldecode($name), 'type' => $type, 'ttl' => 300, 'records' => array());

@@ -14,12 +14,7 @@
 			return $name;
 		}
 		static function value(string $type, string $value): string {
-			if($type === 'TXT' && str_starts_with($value, '"')) {
-				$parsed = DNSAPIDNS::parse(";; ANSWER SECTION:\nx. 1 IN TXT " . $value, 'x');
-				if(count($parsed['records']) !== 1) throw new RuntimeException('TXT_VALUE_INVALID');
-				return $parsed['records'][0]['value'];
-			}
-			return $value;
+			return $type === 'TXT' ? DNSAPITXT::value($value) : $value;
 		}
 		static function validate(array $record): array {
 			if(!is_string($record['name'] ?? null) || !is_string($record['type'] ?? null) || !is_string($record['value'] ?? null)) throw new RuntimeException('RECORD_INCOMPLETE');

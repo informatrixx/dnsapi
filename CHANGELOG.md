@@ -26,6 +26,9 @@ acceptance and publication are separate approvals.
 - Correct release runtime-file filtering and prevent publication from a tag not integrated into `main`.
 - Preserve existing and inherited Hetzner Cloud challenge TTLs; reject incomplete challenge batches and unconfirmed record creation/deletion.
 - Fail closed on incomplete provider inventory; reject unknown Doctor/Recovery options before side effects and retain uncertain writes for reconciliation.
+- Reject invalid legacy Hetzner inventory JSON, record lists and fields instead of confirming false absence and discarding recovery intents.
+- Serialize long Hetzner Cloud TXT/DKIM contents as escaped character strings of at most 255 octets, independently of semantic value comparison.
+- Match multipart TXT values by decoded content and send their original provider representation for exact deletion, preserving sibling records and comments.
 
 ### Changed
 

@@ -2,6 +2,7 @@
 	require __DIR__ . '/support/Test.php';
 	require __DIR__ . '/../src/Provider/Netcup.php';
 	require __DIR__ . '/../src/Provider/HetznerCloud.php';
+	require __DIR__ . '/../src/Provider/Hetzner.php';
 	require __DIR__ . '/../src/Dns/Records.php';
 	require __DIR__ . '/../src/Certbot/Helpers.php';
 	$directory = sys_get_temp_dir() . '/dnsapi-wire-' . bin2hex(random_bytes(8));
@@ -68,6 +69,43 @@
 		$state = json_decode(file_get_contents($statePath), true);
 		$last = end($state['requests']);
 		testAssert($last['body']['action'] === 'logout' && $last['body']['param']['apisessionid'] === 'fixture-session' && !isset($last['body']['param']['apipassword']), 'logout sends session not password');
+		$legacyRecord = array('id' => 'owned', 'zone_id' => 'legacy-zone', 'name' => '_acme-challenge', 'type' => 'TXT', 'value' => 'owned-token', 'ttl' => 120);
+		$state['legacy'] = array('owned' => $legacyRecord, 'foreign' => array_replace($legacyRecord, array('id' => 'foreign', 'value' => 'foreign-token')));
+		file_put_contents($statePath, json_encode($state));
+		$legacy = new hetznerAPI('legacy-zone', array('recordsURL' => 'http://' . $address . '/legacy/records', 'APIToken' => 'fixture'));
+		testAssert(count($legacy->getRecords()) === 2, 'legacy Hetzner reads a valid record list');
+		$journal = new DNSAPIJournal($directory . '/journal.json');
+		$entry = array('run' => str_repeat('a', 32), 'owned' => true, 'phase' => 'created', 'provider_key' => 'Hetzner:legacy-zone', 'zone' => 'example.test', 'CERTBOT_IDENTIFIER' => 'example.test', 'CERTBOT_VALIDATION' => 'owned-token', 'record' => $legacyRecord);
+		$journal->data['journal']['owned-operation'] = $entry; $journal->save();
+		$config = array('API' => array('Hetzner' => array('recordsURL' => 'https://dns.hetzner.com/api/v1/records', 'APIToken' => 'fixture')), 'domains' => array('example.test' => array('API' => 'Hetzner', 'zoneID' => 'legacy-zone')));
+		$GLOBALS['dnsapiProviderFactory'] = fn() => $legacy;
+		$badResponses = array('invalid-json' => '{broken', 'null-response' => 'null', 'array-response' => '[]', 'missing-records' => '{"unexpected":"schema"}', 'null-records' => '{"records":null}', 'object-records' => '{"records":{}}', 'scalar-records' => '{"records":false}', 'non-list-records' => '{"records":{"owned":{}}}', 'null-record' => '{"records":[null]}', 'array-record' => '{"records":[[]]}', 'duplicate-ids' => json_encode(array('records' => array($legacyRecord, $legacyRecord))));
+		$badResponses['partial-inventory'] = json_encode(array('records' => array($state['legacy']['foreign'], array('id' => 'owned'))));
+		foreach(array('id', 'name', 'type', 'value') as $field) {
+			$invalid = $legacyRecord; unset($invalid[$field]);
+			$badResponses['missing-' . $field] = json_encode(array('records' => array($invalid)));
+			$invalid[$field] = false;
+			$badResponses['invalid-' . $field] = json_encode(array('records' => array($invalid)));
+		}
+		foreach(array('id' => '', 'name' => '', 'type' => '', 'ttl' => '120', 'zone_id' => 'other-zone') as $field => $value)
+			$badResponses['bad-' . $field] = json_encode(array('records' => array(array_replace($legacyRecord, array($field => $value)))));
+		foreach($badResponses as $label => $response) {
+			$state = json_decode(file_get_contents($statePath), true);
+			$state['legacy_response'] = $response; file_put_contents($statePath, json_encode($state));
+			testAssert($legacy->getRecords() === false, 'legacy malformed inventory fails without warnings: ' . $label);
+			testAssert(!dnsapiCleanup($journal, $config, array('owned-operation')), 'legacy malformed inventory never confirms cleanup: ' . $label);
+			$saved = json_decode(file_get_contents($directory . '/journal.json'), true);
+			testAssert(($saved['journal']['owned-operation'] ?? null) === $entry + array('cleanup_failed' => true), 'legacy malformed inventory preserves exact recovery intent: ' . $label);
+		}
+		$state = json_decode(file_get_contents($statePath), true);
+		testAssert(count($state['legacy']) === 2 && !array_filter($state['requests'], fn($r) => str_starts_with($r['path'], '/legacy/') && $r['method'] !== 'GET'), 'invalid legacy replies never trigger a delete');
+		unset($state['legacy_response']); file_put_contents($statePath, json_encode($state));
+		testAssert(dnsapiCleanup($journal, $config, array('owned-operation')), 'legacy recovery succeeds after inventory becomes valid');
+		$state = json_decode(file_get_contents($statePath), true);
+		testAssert(array_keys($state['legacy']) === array('foreign') && !$journal->data['journal'], 'legacy recovery removes only owned value and clears confirmed intent');
+		$state['legacy'] = array(); file_put_contents($statePath, json_encode($state));
+		testAssert($legacy->getRecords() === array(), 'legacy explicit empty list is valid inventory');
+		unset($GLOBALS['dnsapiProviderFactory'], $journal, $legacy);
 		$cloud = new hetznerCloudAPI('1', array('recordsURL' => 'http://' . $address . '/zones', 'APIToken' => 'fixture', 'zoneName' => 'example.test'));
 		testAssert(count($cloud->getRecords()) === 2, 'Cloud pagination consumes all pages');
 		$ttl = dnsapiChallengeTTL($cloud->getRecords(), 'example.test', 'example.test');
@@ -91,6 +129,48 @@
 		testAssert($cloud->deleteRecord(name: '_25._tcp.mail', type: 'TLSA', value: '3 1 1 ' . str_repeat('b', 64)), 'Cloud removes final value');
 		testAssert(!isset($cloud->getRecords()['_25._tcp.mail/TLSA']), 'empty RRSet disappears after final removal');
 		$service = new DNSAPIRecords($cloud, 'example.test');
+		$state = json_decode(file_get_contents($statePath), true);
+		$multipart = array('value' => '"first" "second"', 'comment' => 'retain exact provider spelling');
+		$state['cloud']['multipart/TXT'] = array('id' => 'multipart/TXT', 'name' => 'multipart', 'type' => 'TXT', 'ttl' => 300, 'records' => array($multipart, array('value' => '"sibling"')));
+		file_put_contents($statePath, json_encode($state));
+		$cloud->getRecords();
+		$requestCount = count(json_decode(file_get_contents($statePath), true)['requests']);
+		testAssert($cloud->createRecord(name: 'multipart', type: 'TXT', value: 'firstsecond')['value'] === $multipart['value'], 'Cloud finds semantically equal multipart TXT without adding a duplicate');
+		$state = json_decode(file_get_contents($statePath), true);
+		testAssert(!array_slice($state['requests'], $requestCount), 'equivalent TXT create does not send a mutation');
+		testAssert($cloud->multiSetRecords(array(array('name' => 'multipart', 'type' => 'TXT', 'value' => 'firstsecond'), array('name' => 'multipart', 'type' => 'TXT', 'value' => 'sibling'))), 'Cloud bulk comparison preserves comments on equivalent TXT content');
+		$state = json_decode(file_get_contents($statePath), true);
+		testAssert(!array_filter(array_slice($state['requests'], $requestCount), fn($r) => $r['method'] !== 'GET') && $state['cloud']['multipart/TXT']['records'][0] === $multipart, 'Cloud equivalent bulk set preserves original spelling and comment without a write');
+		$service->apply($service->plan('delete', array('name' => 'multipart', 'type' => 'TXT', 'value' => 'firstsecond')));
+		$state = json_decode(file_get_contents($statePath), true);
+		$deletes = array_values(array_filter($state['requests'], fn($r) => $r['path'] === '/zones/1/rrsets/multipart/TXT/actions/remove_records'));
+		testAssert(end($deletes)['body']['records'] === array($multipart), 'Cloud exact delete sends the original multipart provider record');
+		testAssert($state['cloud']['multipart/TXT']['records'] === array(array('value' => '"sibling"')), 'Cloud multipart deletion preserves sibling TXT');
+		$state['cloud']['multipart/TXT']['records'][] = array('value' => '"esca\\112ed" "-value"', 'comment' => 'original DNS decimal escape');
+		file_put_contents($statePath, json_encode($state));
+		$service->apply($service->plan('delete', array('name' => 'multipart', 'type' => 'TXT', 'value' => 'escaped-value')));
+		$state = json_decode(file_get_contents($statePath), true);
+		$deletes = array_values(array_filter($state['requests'], fn($r) => $r['path'] === '/zones/1/rrsets/multipart/TXT/actions/remove_records'));
+		testAssert(end($deletes)['body']['records'][0]['value'] === '"esca\\112ed" "-value"' && $state['cloud']['multipart/TXT']['records'] === array(array('value' => '"sibling"')), 'Cloud semantic delete retains original decimal escapes and foreign values');
+		$service->apply($service->plan('delete', array('name' => 'multipart', 'type' => 'TXT', 'value' => 'sibling')));
+		foreach(array(0, 254, 255, 256, 300, 510, 511) as $length) {
+			$logical = str_repeat('x', $length);
+			$input = implode(' ', array_map(fn($part) => '"' . $part . '"', str_split($logical, 200)));
+			$service->apply($service->plan('create', array('name' => 'selector._domainkey', 'type' => 'TXT', 'value' => $input)));
+			$state = json_decode(file_get_contents($statePath), true);
+			$wire = $state['cloud']['selector._domainkey/TXT']['records'][0]['value'];
+			preg_match_all('/"((?:[^"\\\\]|\\\\.)*)"/', $wire, $strings);
+			testAssert(count($strings[1]) === max(1, (int)ceil($length / 255)) && max(array_map('strlen', $strings[1])) <= 255, 'Cloud splits long TXT into bounded character strings: ' . $length);
+			$record = array_values(array_filter($service->snapshot(), fn($r) => $r['name'] === 'selector._domainkey'))[0];
+			testAssert($record['value'] === $logical, 'Cloud multipart TXT round-trips through planner: ' . $length);
+			$service->apply($service->plan('delete', array('name' => 'selector._domainkey', 'type' => 'TXT', 'value' => $logical)));
+		}
+		$logical = str_repeat('x', 254) . '"' . '\\' . str_repeat("\xc3\xa4", 150);
+		$service->apply($service->plan('create', array('name' => 'escaped', 'type' => 'TXT', 'value' => $logical)));
+		$state = json_decode(file_get_contents($statePath), true);
+		testAssert(!preg_match('/[\x80-\xff]/', $state['cloud']['escaped/TXT']['records'][0]['value']), 'Cloud serializes byte boundaries and non-ASCII as DNS escapes safe for JSON');
+		testAssert(array_values(array_filter($service->snapshot(), fn($r) => $r['name'] === 'escaped'))[0]['value'] === $logical, 'Cloud escaping preserves quotes, backslashes and UTF-8 octets');
+		$service->apply($service->plan('delete', array('name' => 'escaped', 'type' => 'TXT', 'value' => $logical)));
 		$service->apply($service->plan('create', array('name' => '_acme-challenge', 'type' => 'TXT', 'value' => 'second')));
 		$service->apply($service->plan('set', array('id' => '_acme-challenge/TXT', 'value' => 'foreign')));
 		$state = json_decode(file_get_contents($statePath), true);
@@ -118,6 +198,7 @@
 		$state['failure'] = true; file_put_contents($statePath, json_encode($state));
 		testAssert($cloud->getRecords() === false && !str_contains($cloud->lastError, 'private-fixture-value'), 'HTTP error is not empty inventory and body is not logged');
 	} finally {
+		unset($GLOBALS['dnsapiProviderFactory'], $journal, $legacy);
 		unset($netcupService, $service, $netcup, $cloud, $health);
 		proc_terminate($server); proc_close($server);
 		foreach(glob($directory . '/*') as $path) unlink($path);
