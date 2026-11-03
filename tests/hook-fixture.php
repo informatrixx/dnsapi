@@ -46,5 +46,10 @@
 					$answers .= "$name 120 IN TXT \"" . trim($part['value'], '"') . "\"\n";
 		}
 		if($type === 'TXT' && getenv('DNSAPI_FIXTURE_FAILURE') === 'dns') $answers = '';
+		if($type === 'TXT' && getenv('DNSAPI_FIXTURE_FAILURE') === 'preflight-refused') return array('output' => ";; ->>HEADER<<- opcode: QUERY, status: REFUSED, id: 1\n;; flags: qr ra; QUERY: 1\n;; ANSWER SECTION:\n", 'exit' => 0, 'duration_ms' => 1);
+		if($type === 'TXT' && getenv('DNSAPI_FIXTURE_FAILURE') === 'dns-delayed') {
+			static $queries = 0;
+			if(++$queries <= 3) return array('output' => ";; ->>HEADER<<- opcode: QUERY, status: NXDOMAIN, id: 1\n;; flags: qr rd ra; QUERY: 1\n;; ANSWER SECTION:\n;; AUTHORITY SECTION:\nexample.test. 3600 IN SOA ns.example.test. hostmaster.example.test. 1 2 3 4 3600\n", 'exit' => 0, 'duration_ms' => 1);
+		}
 		return array('output' => ";; ->>HEADER<<- opcode: QUERY, status: NOERROR, id: 1\n;; flags: qr aa; QUERY: 1\n;; ANSWER SECTION:\n" . $answers, 'exit' => 0, 'duration_ms' => 1);
 	};

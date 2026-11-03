@@ -21,6 +21,7 @@
   },
   "certbot": {
     "propagation_mode": "strict",
+    "debug": false,
     "propagation_timeout_seconds": 1200,
     "dns_timeout_seconds": 3,
     "poll_interval_seconds": 10,

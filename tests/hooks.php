@@ -10,7 +10,7 @@
 	$directory = sys_get_temp_dir() . '/dnsapi-hooks-' . bin2hex(random_bytes(8));
 	mkdir($directory, 0700);
 	$environment = array('PATH' => getenv('PATH'), 'DNSAPI_CONFIG_FILE' => $directory . '/config.json', 'DNSAPI_JOURNAL_FILE' => $directory . '/journal.json', 'DNSAPI_FIXTURE_STATE' => $directory . '/records.json', 'DNSAPI_RUN_ID' => 'fixture-run', 'CERTBOT_DOMAIN' => 'example.test', 'CERTBOT_VALIDATION' => 'first-token', 'CERTBOT_REMAINING_CHALLENGES' => '1');
-	file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode(array('API' => array('HetznerCloud' => array('recordsURL' => 'https://api.hetzner.cloud/v1/zones', 'APIToken' => 'fixture-secret')), 'domains' => array('example.test' => array('zoneID' => '1', 'API' => 'HetznerCloud')), 'certbot' => array('propagation_timeout_seconds' => 1))));
+	file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode(array('API' => array('HetznerCloud' => array('recordsURL' => 'https://api.hetzner.cloud/v1/zones', 'APIToken' => 'fixture-secret')), 'domains' => array('example.test' => array('zoneID' => '1', 'API' => 'HetznerCloud')), 'certbot' => array('propagation_timeout_seconds' => 1, 'debug' => true))));
 	try {
 		$first = hookProcess('certbot-dnsapi-authenticator.php', $environment);
 		check($first['exit'] === 0 && preg_match('/^[a-f0-9]{32}$/D', $first['output']) === 1, 'first hook writes only operation ID');
@@ -87,15 +87,45 @@
 		check($cleanup['exit'] === 0, 'recursive first challenge cleanup');
 		$cleanup = hookProcess('certbot-dnsapi-cleanup.php', array_replace($secondEnv, array('CERTBOT_AUTH_OUTPUT' => $second['output'])));
 		check($cleanup['exit'] === 0, 'recursive second challenge cleanup');
+		$quietConfig = $config;
+		unset($quietConfig['certbot']['debug']);
+		$quietConfig['certbot']['propagation_timeout_seconds'] = 4;
+		$quietConfig['certbot']['poll_interval_seconds'] = 1;
+		foreach(array('strict', 'recursive') as $mode) {
+			$quietConfig['certbot']['propagation_mode'] = $mode;
+			file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($quietConfig));
+			$quietEnv = array_replace($environment, array('CERTBOT_REMAINING_CHALLENGES' => '0', 'DNSAPI_FIXTURE_FAILURE' => $mode === 'recursive' ? 'dns-delayed' : ''));
+			$start = hrtime(true);
+			$quiet = hookProcess('certbot-dnsapi-authenticator.php', $quietEnv);
+			check($quiet['exit'] === 0 && $quiet['error'] === '' && preg_match('/^[a-f0-9]{32}$/D', $quiet['output']) === 1, 'successful default hook has only operation ID, including delayed propagation: ' . $mode);
+			if($mode === 'recursive') check((hrtime(true) - $start) / 1e9 >= 1, 'quiet logging still waits for missing resolver values');
+			$cleanup = hookProcess('certbot-dnsapi-cleanup.php', array_replace($environment, array('CERTBOT_AUTH_OUTPUT' => $quiet['output'])));
+			check($cleanup['exit'] === 0 && !json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'quiet operation ID remains compatible with exact cleanup');
+		}
+		$quietConfig['certbot']['propagation_mode'] = 'strict';
+		file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($quietConfig));
+		$refused = hookProcess('certbot-dnsapi-authenticator.php', array_replace($quietEnv, array('DNSAPI_FIXTURE_FAILURE' => 'preflight-refused')));
+		check($refused['exit'] === 1 && str_contains($refused['error'], 'CHALLENGE_AUTHORITY_UNCONFIRMED') && str_contains($refused['error'], '"event":"PREFLIGHT"') && str_contains($refused['error'], '"error":"REFUSED"'), 'default preflight failure retains actionable authority diagnostics');
+		check(!json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'preflight diagnostic failure still prevents provider writes');
+		$quietConfig['certbot']['propagation_mode'] = 'recursive';
+		$quietConfig['certbot']['debug'] = true;
+		file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($quietConfig));
+		$debug = hookProcess('certbot-dnsapi-authenticator.php', $quietEnv);
+		check($debug['exit'] === 0 && substr_count($debug['error'], '"event":"PROPAGATION"') === 6 && str_contains($debug['error'], '"error":"NXDOMAIN"') && str_contains($debug['error'], '"matched":true'), 'debug mode retains pending and successful resolver diagnostics');
+		check(!str_contains($debug['error'], 'first-token') && !str_contains($debug['error'], 'fixture-secret'), 'debug mode never exposes challenge values or credentials');
+		$cleanup = hookProcess('certbot-dnsapi-cleanup.php', array_replace($environment, array('CERTBOT_AUTH_OUTPUT' => $debug['output'])));
+		check($cleanup['exit'] === 0, 'debug output does not contaminate cleanup operation ID');
 		$invalidConfig = $config;
 		$invalidConfig['certbot']['propagation_mode'] = 'automatic';
 		file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($invalidConfig));
 		$invalid = hookProcess('certbot-dnsapi-authenticator.php', $environment);
 		check($invalid['exit'] === 1 && str_contains($invalid['error'], 'CONFIG_PROPAGATION_MODE_INVALID') && !json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true), 'invalid mode blocks hook before DNS mutation');
+		$config['certbot']['debug'] = false;
 		file_put_contents($environment['DNSAPI_CONFIG_FILE'], json_encode($config));
 		$start = hrtime(true);
 		$timeout = hookProcess('certbot-dnsapi-authenticator.php', array_replace($environment, array('CERTBOT_REMAINING_CHALLENGES' => '0', 'DNSAPI_FIXTURE_FAILURE' => 'dns')));
 		check($timeout['exit'] === 1 && str_contains($timeout['error'], 'PROPAGATION_TIMEOUT') && (hrtime(true) - $start) / 1e9 >= 0.9 && (hrtime(true) - $start) / 1e9 < 2, 'hook deadline includes polling sleep: ' . $timeout['error']);
+		check(substr_count($timeout['error'], '"event":"PROPAGATION"') === 3 && str_contains($timeout['error'], '"error":"NODATA"') && !str_contains($timeout['error'], 'first-token') && !str_contains($timeout['error'], 'fixture-secret'), 'default timeout flushes bounded redacted diagnostics before the error');
 		check(!json_decode(file_get_contents($environment['DNSAPI_FIXTURE_STATE']), true) && !json_decode(file_get_contents($environment['DNSAPI_JOURNAL_FILE']), true)['journal'], 'propagation failure automatically cleans own values');
 		file_put_contents($environment['DNSAPI_JOURNAL_FILE'], '{broken');
 		$corrupt = hookProcess('certbot-dnsapi-authenticator.php', $environment);

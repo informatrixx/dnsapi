@@ -1,5 +1,27 @@
 <?php
 	require_once __DIR__ . '/../Provider/Transport.php';
+	class DNSAPIDiagnostics {
+		private array $records = array();
+		function __construct(private bool $debug = false, private $writer = null) {
+			$this->writer ??= fn($record) => fwrite(STDERR, json_encode($record, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+		}
+		function record(array $record): void {
+			if($this->debug) { ($this->writer)($record); return; }
+			$this->records[] = $record;
+			// Retain bounded failure context without emitting normal polling states on success.
+			if(count($this->records) > 128) array_shift($this->records);
+		}
+		function flush(): void {
+			foreach($this->records as $record) ($this->writer)($record);
+			$this->records = array();
+		}
+	}
+	function dnsapiDiagnostic(array $record): void {
+		$diagnostics = $GLOBALS['dnsapiDiagnostics'] ?? null;
+		if($diagnostics instanceof DNSAPIDiagnostics) $diagnostics->record($record);
+		else fwrite(STDERR, json_encode($record, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+	}
+
 	class DNSAPIDeadline {
 		private float $end;
 		function __construct(float $seconds) {

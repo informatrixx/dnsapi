@@ -4,10 +4,13 @@
 	umask(0077);
 	$journal = null;
 	$run = null;
+	$diagnostics = null;
 	try {
 		$config = dnsapiConfig();
 		if(!defined('CONFIG')) define('CONFIG', $config);
 		$settings = dnsapiSettings($config);
+		$diagnostics = new DNSAPIDiagnostics($settings['debug']);
+		$GLOBALS['dnsapiDiagnostics'] = $diagnostics;
 		$GLOBALS['dnsapiDeadline'] = new DNSAPIDeadline($settings['propagation_timeout_seconds']);
 		$identifier = dnsapiIdentifier(dnsapiEnv('CERTBOT_IDENTIFIER', dnsapiEnv('CERTBOT_DOMAIN')));
 		$validation = dnsapiEnv('CERTBOT_VALIDATION');
@@ -63,6 +66,7 @@
 			dnsapiWait($config, $entries, $GLOBALS['dnsapiDeadline']);
 		}
 	} catch(Throwable $error) {
+		if($diagnostics instanceof DNSAPIDiagnostics) $diagnostics->flush();
 		$code = preg_match('/^[A-Z_]+/', $error->getMessage(), $match) ? $match[0] : 'HOOK_FAILED';
 		fwrite(STDERR, $code . ': authentication failed; journal recovery may be required' . PHP_EOL);
 		if($journal instanceof DNSAPIJournal && $run !== null && isset($config)) {
