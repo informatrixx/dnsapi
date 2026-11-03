@@ -8,6 +8,8 @@
 		if(!is_array($settings)) throw new RuntimeException('CONFIG_CERTBOT_INVALID');
 		$settings += array('propagation_mode' => 'strict');
 		if(!in_array($settings['propagation_mode'], array('strict', 'recursive'), true)) throw new RuntimeException('CONFIG_PROPAGATION_MODE_INVALID');
+		$settings += array('debug' => false);
+		if(!is_bool($settings['debug'])) throw new RuntimeException('CONFIG_DEBUG_INVALID');
 		$settings += array('propagation_timeout_seconds' => 1200, 'dns_timeout_seconds' => 3, 'poll_interval_seconds' => 10, 'discovery_resolver' => '1.1.1.1', 'resolvers' => array('1.1.1.1', '8.8.8.8', '9.9.9.9'));
 		foreach(array('propagation_timeout_seconds' => 7200, 'dns_timeout_seconds' => 30, 'poll_interval_seconds' => 300) as $name => $max)
 			if(!is_int($settings[$name]) || $settings[$name] < 1 || $settings[$name] > $max) throw new RuntimeException('CONFIG_TIME_LIMIT_INVALID');

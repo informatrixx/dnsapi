@@ -19,6 +19,7 @@ acceptance and publication are separate approvals.
 
 ### Fixed
 
+- Keep successful Certbot auth hooks quiet by default while retaining bounded failure diagnostics; `certbot.debug: true` enables the full redacted preflight/propagation stream without changing verification.
 - Refuse TLSA generation from missing or malformed certificates instead of hashing empty pipeline output.
 - Netcup upserts carry existing IDs, reject ambiguous targets and use the session ID for logout; bulk replacement preserves unrelated records.
 - Preserve IPv6/SPF values in CLI parsing and return nonzero errors; reject stale or ambiguous mutation plans.

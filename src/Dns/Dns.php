@@ -127,7 +127,7 @@
 				$valid = false;
 				foreach($addresses as $ip) {
 					$result = $this->query($name, 'TXT', $ip, true);
-					fwrite(STDERR, json_encode(array('event' => 'PREFLIGHT') + $this->summary($result, 'authoritative', $ip), JSON_UNESCAPED_SLASHES) . PHP_EOL);
+					dnsapiDiagnostic(array('event' => 'PREFLIGHT') + $this->summary($result, 'authoritative', $ip));
 					if($result['cname'] || $result['referral']) throw new RuntimeException('CHALLENGE_DELEGATION_UNSUPPORTED');
 					if($result['exit'] === 0 && !$result['tc'] && $result['aa'] && in_array($result['rcode'], array('NOERROR', 'NXDOMAIN'), true)) $valid = true;
 				}

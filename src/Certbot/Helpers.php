@@ -116,7 +116,7 @@
 				$servers[$data['zone']] ??= $settings['propagation_mode'] === 'strict' ? $dns->authorities($data['zone']) : array();
 				$result = $dns->check('_acme-challenge.' . $identifier, $entry['CERTBOT_VALIDATION'], $servers[$data['zone']]);
 				foreach($result['results'] as $diagnostic)
-					fwrite(STDERR, json_encode(array('event' => 'PROPAGATION', 'mode' => $settings['propagation_mode'], 'identifier' => $identifier, 'provider_active' => $active, 'remaining_seconds' => (int)$deadline->remaining()) + $diagnostic, JSON_UNESCAPED_SLASHES) . PHP_EOL);
+					dnsapiDiagnostic(array('event' => 'PROPAGATION', 'mode' => $settings['propagation_mode'], 'identifier' => $identifier, 'provider_active' => $active, 'remaining_seconds' => (int)$deadline->remaining()) + $diagnostic);
 				$all = $all && $active && $result['success'];
 			}
 			if($all) return;

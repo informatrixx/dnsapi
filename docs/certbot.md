@@ -24,6 +24,7 @@ Optional top-level configuration, shown with defaults:
 {
   "certbot": {
     "propagation_mode": "strict",
+    "debug": false,
     "propagation_timeout_seconds": 1200,
     "dns_timeout_seconds": 3,
     "poll_interval_seconds": 10,
@@ -116,7 +117,16 @@ before issuance: this can create negative cache entries. Normal auth preflight
 queries challenge names only at authoritative IPs in strict mode; recursive
 mode uses only provider inventory for preflight.
 
-Diagnostics use stderr (doctor uses stdout JSON) without raw answers or TXT values.
+Successful auth hooks are quiet by default: stdout contains only the operation ID
+needed by cleanup. Pending NXDOMAIN/NODATA/TXT-mismatch polling states are buffered
+in memory, not emitted as hook errors. Verification and deadlines are unchanged.
+On failure the most recent 128 diagnostic records are emitted to stderr before
+the terminal error. Set `certbot.debug` to the JSON boolean `true` to stream every
+preflight/propagation diagnostic, including during successful runs. Certbot labels
+all stderr as "error output", even when the hook exits successfully. Debug output
+is not duplicated when a failure flushes the buffer.
+
+Diagnostics use stderr (doctor keeps stdout JSON) without raw answers or TXT values.
 Process failures distinguish `NETWORK_UNREACHABLE`, `NO_ROUTE`,
 `CONNECTION_REFUSED`, `PERMISSION_DENIED`, `TIMEOUT` and `NO_RESPONSE`.
 DNS `REFUSED` is a received DNS response, not a refused TCP connection.

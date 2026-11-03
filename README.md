@@ -133,8 +133,11 @@ certbot renew \
 
 Die Hooks erstellen zuerst alle Challenges. Der letzte Auth-Hook prüft alle
 Werte gesammelt gegen die autoritativen Nameserver und die konfigurierten
-öffentlichen Resolver. Diagnoseausgaben gehen nach stderr; stdout enthält nur
-die Vorgangskennung für den Cleanup. Details, Konfiguration und Recovery:
+öffentlichen Resolver. Erfolgreiche Auth-Hooks sind standardmäßig ruhig; stdout
+enthält nur die Vorgangskennung für den Cleanup. Bei Fehlern erscheinen die
+letzten Diagnosen auf stderr. Mit `certbot.debug: true` werden alle Prüfrunden
+ausgegeben; Certbot bezeichnet stderr auch bei Erfolg als „error output“.
+Details, Konfiguration und Recovery:
 [Certbot-Betrieb](docs/certbot.md).
 
 Standardmäßig gilt `certbot.propagation_mode: "strict"`. Für eingeschränkte
